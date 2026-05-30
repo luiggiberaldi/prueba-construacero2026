@@ -475,7 +475,7 @@ function TransportistaSelector({ transportistas, transportistaId, setTransportis
 
 export default function CotizacionBuilder({ cotizacionExistente = null, clientePreseleccionado = null, onVolver, onGuardado, onDespachar }) {
   const esEdicion = !!cotizacionExistente
-  const { perfil } = useAuthStore()
+  const { perfil, offline } = useAuthStore()
   const esSupervisor = (perfil?.rol === 'supervisor' || perfil?.rol === 'jefe')
   const { aplicarMarkup, esExterno: esVendedorExterno } = usePrecioVendedor()
 
@@ -812,6 +812,8 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
           cotizacionId: null,
           campos: { clienteId, vendedorId: esSupervisor && !esEdicion ? vendedorId : undefined, transportistaId, notasCliente, notasInternas, descuentoGlobalPct, costoEnvioUsd, corteUsd },
           items,
+          sendAfterSave: true,
+          tasaBcv,
         }
         console.log('payload cotizacion (builder-enviar-nuevo)', payload)
 
@@ -824,6 +826,8 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
           cotizacionId: currentId,
           campos: { clienteId, vendedorId: esSupervisor && !esEdicion ? vendedorId : undefined, transportistaId, notasCliente, notasInternas, descuentoGlobalPct, costoEnvioUsd, corteUsd },
           items,
+          sendAfterSave: true,
+          tasaBcv,
         })
         if (res?._queued) isOfflineId = true
       }
@@ -873,7 +877,7 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
       cot = {
         id: cotizacionId, numero: 'OFFLINE', cliente_id: clienteId, vendedor_id: vendedor?.id,
         transportista_id: transportistaId, estado: 'borrador', 
-        subtotal_usd: subtotal, descuento_global_pct: descuentoGlobalPct, descuento_usd,
+        subtotal_usd: subtotal, descuento_global_pct: descuentoGlobalPct, descuento_usd: descuentoUsd,
         costo_envio_usd: costoEnvioUsd, corte_usd: corteUsd, total_usd: totalUsd,
         notas_cliente: notasCliente, cliente: clienteHidratado, vendedor
       }
@@ -899,6 +903,10 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
   }
 
   async function descargarPDF() {
+    if ((offline || !navigator.onLine) && !String(cotizacionId).startsWith('local_')) {
+      showToast('Estás offline. La descarga de PDF estará disponible cuando te conectes.', 'warning')
+      return
+    }
     setPdfLoading(true)
     try {
       const { generarPDF } = await import('../../services/pdf/cotizacionPDF')
@@ -915,7 +923,11 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
         conIVA: conIva,
       })
     } catch (e) {
-      console.error(e)
+      if (e.message?.includes('dynamically imported module') || e.message?.includes('Failed to fetch')) {
+        showToast('Estás offline. La descarga de PDF estará disponible cuando te conectes.', 'warning')
+      } else {
+        showToast('Error al descargar PDF: ' + (e.message || 'Error desconocido'), 'error')
+      }
     } finally {
       setPdfLoading(false)
     }
@@ -946,6 +958,10 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
   }
 
   async function imprimirCotizacion() {
+    if ((offline || !navigator.onLine) && !String(cotizacionId).startsWith('local_')) {
+      showToast('Estás offline. La impresión estará disponible cuando te conectes.', 'warning')
+      return
+    }
     setPrintLoading(true)
     try {
       const { generarPDF } = await import('../../services/pdf/cotizacionPDF')
@@ -964,13 +980,31 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
       })
       printOrDownloadPdf(blob, `${numDisplay.replace(/\s+/g, '_')}.pdf`)
     } catch (err) {
-      showToast('Error al imprimir: ' + (err.message || 'Error desconocido'), 'error')
+      if (err.message?.includes('dynamically imported module') || err.message?.includes('Failed to fetch')) {
+        showToast('Estás offline. La impresión estará disponible cuando te conectes.', 'warning')
+      } else {
+        showToast('Error al imprimir: ' + (err.message || 'Error desconocido'), 'error')
+      }
     } finally {
       setPrintLoading(false)
     }
   }
 
   async function handleWhatsApp() {
+    if (offline || numDisplay === 'OFFLINE' || String(cotizacionId).startsWith('local_') || !navigator.onLine) {
+      const totalConIva = conIva 
+        ? (totalUsd + (subtotal - descuentoUsd) * 0.16)
+        : totalUsd
+      const texto = generarMensaje({
+        nombreNegocio: config.nombre_negocio,
+        nombreCliente: clienteSeleccionado?.nombre,
+        numDisplay,
+        totalUsd: totalConIva,
+        nombreVendedor: perfil?.nombre,
+      })
+      window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, '_blank', 'noopener')
+      return
+    }
     setWaLoading(true)
     try {
       const { generarPDF } = await import('../../services/pdf/cotizacionPDF')

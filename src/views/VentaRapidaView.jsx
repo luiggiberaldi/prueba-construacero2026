@@ -71,7 +71,7 @@ function ModalVentaExitosa({ data, onClose, config }) {
   if (!data) return null
 
   const { numero, despachoId, cotizacionId, clienteNombre, items, subtotal, totalUsd, totalBs, tasa, formasPago, transportista, flete, corte, notas } = data
-  const numDisplay = `VR-${String(numero).padStart(5, '0')}`
+  const numDisplay = data._queued ? 'PENDIENTE (Offline)' : `VR-${String(numero).padStart(5, '0')}`
   const totalConFlete = (totalUsd || 0) + (Number(flete) || 0) + (Number(corte) || 0)
 
   function printOrDownloadPdf(blob, filename) {
@@ -259,64 +259,74 @@ function ModalVentaExitosa({ data, onClose, config }) {
 
           {/* Acciones */}
           <div className="space-y-2">
-            <div className="flex gap-2">
-              {/* Descargar con opciones */}
-              <div className="flex-1 relative">
-                <button onClick={() => { setShowPdfMenu(v => !v); setShowPrintMenu(false) }} disabled={pdfLoading}
-                  className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 font-semibold text-xs rounded-xl transition-all active:scale-[0.98] disabled:opacity-50">
-                  {pdfLoading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                  Descargar
-                </button>
-                {showPdfMenu && (
-                  <div className="absolute bottom-full left-0 right-0 mb-1 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-50 overflow-hidden">
-                    <MonedaSelector />
-                    <button onClick={() => handleDescargar('nota')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 flex items-center justify-between">
-                      <span><FileText size={12} className="inline mr-1.5 text-slate-400" />Nota de Entrega</span>
-                      <span className={`text-[9px] font-bold px-1 rounded ${monedaPdf === 'bs' ? 'text-blue-600 bg-blue-50' : monedaPdf === 'bcv' ? 'text-teal-600 bg-teal-50' : 'text-emerald-600 bg-emerald-50'}`}>
-                        {monedaPdf === 'bs' ? 'Bs' : monedaPdf === 'bcv' ? 'BCV' : '$'}
-                      </span>
-                    </button>
-                    <button onClick={() => handleDescargar('orden')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 flex items-center justify-between border-b border-slate-100">
-                      <span><Package size={12} className="inline mr-1.5 text-slate-400" />Orden de Despacho</span>
-                      <span className={`text-[9px] font-bold px-1 rounded ${monedaPdf === 'bs' ? 'text-blue-600 bg-blue-50' : monedaPdf === 'bcv' ? 'text-teal-600 bg-teal-50' : 'text-emerald-600 bg-emerald-50'}`}>
-                        {monedaPdf === 'bs' ? 'Bs' : monedaPdf === 'bcv' ? 'BCV' : '$'}
-                      </span>
-                    </button>
-                  </div>
-                )}
+            {data._queued ? (
+              <div className="bg-amber-50 border border-amber-200 text-amber-800 text-[11px] rounded-xl p-3 text-left leading-relaxed">
+                <div className="flex items-center gap-1.5 font-bold mb-1 text-amber-900">
+                  <AlertCircle className="text-amber-600 shrink-0" size={14} />
+                  Guardado sin conexión
+                </div>
+                Esta venta se ha encolado localmente. La nota de entrega, orden de despacho e impresiones estarán disponibles una vez que recuperes la conexión y se sincronice el registro.
               </div>
+            ) : (
+              <div className="flex gap-2">
+                {/* Descargar con opciones */}
+                <div className="flex-1 relative">
+                  <button onClick={() => { setShowPdfMenu(v => !v); setShowPrintMenu(false) }} disabled={pdfLoading}
+                    className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 font-semibold text-xs rounded-xl transition-all active:scale-[0.98] disabled:opacity-50">
+                    {pdfLoading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                    Descargar
+                  </button>
+                  {showPdfMenu && (
+                    <div className="absolute bottom-full left-0 right-0 mb-1 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-50 overflow-hidden">
+                      <MonedaSelector />
+                      <button onClick={() => handleDescargar('nota')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 flex items-center justify-between">
+                        <span><FileText size={12} className="inline mr-1.5 text-slate-400" />Nota de Entrega</span>
+                        <span className={`text-[9px] font-bold px-1 rounded ${monedaPdf === 'bs' ? 'text-blue-600 bg-blue-50' : monedaPdf === 'bcv' ? 'text-teal-600 bg-teal-50' : 'text-emerald-600 bg-emerald-50'}`}>
+                          {monedaPdf === 'bs' ? 'Bs' : monedaPdf === 'bcv' ? 'BCV' : '$'}
+                        </span>
+                      </button>
+                      <button onClick={() => handleDescargar('orden')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 flex items-center justify-between border-b border-slate-100">
+                        <span><Package size={12} className="inline mr-1.5 text-slate-400" />Orden de Despacho</span>
+                        <span className={`text-[9px] font-bold px-1 rounded ${monedaPdf === 'bs' ? 'text-blue-600 bg-blue-50' : monedaPdf === 'bcv' ? 'text-teal-600 bg-teal-50' : 'text-emerald-600 bg-emerald-50'}`}>
+                          {monedaPdf === 'bs' ? 'Bs' : monedaPdf === 'bcv' ? 'BCV' : '$'}
+                        </span>
+                      </button>
+                    </div>
+                  )}
+                </div>
 
-              {/* Imprimir con opciones */}
-              <div className="flex-1 relative">
-                <button onClick={() => { setShowPrintMenu(v => !v); setShowPdfMenu(false) }} disabled={printLoading}
-                  className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold text-xs rounded-xl transition-all active:scale-[0.98] disabled:opacity-50">
-                  {printLoading ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />}
-                  Imprimir
-                </button>
-                {showPrintMenu && (
-                  <div className="absolute bottom-full left-0 right-0 mb-1 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-50">
-                    <MonedaSelector />
-                    <button onClick={() => handleImprimir('nota')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 flex items-center justify-between">
-                      <span><FileText size={12} className="inline mr-1.5 text-slate-400" />Nota de entrega</span>
-                      <span className={`text-[9px] font-bold px-1 rounded ${monedaPdf === 'bs' ? 'text-blue-600 bg-blue-50' : monedaPdf === 'bcv' ? 'text-teal-600 bg-teal-50' : 'text-emerald-600 bg-emerald-50'}`}>
-                        {monedaPdf === 'bs' ? 'Bs' : monedaPdf === 'bcv' ? 'BCV' : '$'}
-                      </span>
-                    </button>
-                    <button onClick={() => handleImprimir('orden')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 flex items-center justify-between border-t border-slate-100">
-                      <span><Package size={12} className="inline mr-1.5 text-slate-400" />Orden de despacho</span>
-                      <span className={`text-[9px] font-bold px-1 rounded ${monedaPdf === 'bs' ? 'text-blue-600 bg-blue-50' : monedaPdf === 'bcv' ? 'text-teal-600 bg-teal-50' : 'text-emerald-600 bg-emerald-50'}`}>
-                        {monedaPdf === 'bs' ? 'Bs' : monedaPdf === 'bcv' ? 'BCV' : '$'}
-                      </span>
-                    </button>
-                  </div>
-                )}
+                {/* Imprimir con opciones */}
+                <div className="flex-1 relative">
+                  <button onClick={() => { setShowPrintMenu(v => !v); setShowPdfMenu(false) }} disabled={printLoading}
+                    className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold text-xs rounded-xl transition-all active:scale-[0.98] disabled:opacity-50">
+                    {printLoading ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />}
+                    Imprimir
+                  </button>
+                  {showPrintMenu && (
+                    <div className="absolute bottom-full left-0 right-0 mb-1 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-50">
+                      <MonedaSelector />
+                      <button onClick={() => handleImprimir('nota')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 flex items-center justify-between">
+                        <span><FileText size={12} className="inline mr-1.5 text-slate-400" />Nota de entrega</span>
+                        <span className={`text-[9px] font-bold px-1 rounded ${monedaPdf === 'bs' ? 'text-blue-600 bg-blue-50' : monedaPdf === 'bcv' ? 'text-teal-600 bg-teal-50' : 'text-emerald-600 bg-emerald-50'}`}>
+                          {monedaPdf === 'bs' ? 'Bs' : monedaPdf === 'bcv' ? 'BCV' : '$'}
+                        </span>
+                      </button>
+                      <button onClick={() => handleImprimir('orden')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 flex items-center justify-between border-t border-slate-100">
+                        <span><Package size={12} className="inline mr-1.5 text-slate-400" />Orden de despacho</span>
+                        <span className={`text-[9px] font-bold px-1 rounded ${monedaPdf === 'bs' ? 'text-blue-600 bg-blue-50' : monedaPdf === 'bcv' ? 'text-teal-600 bg-teal-50' : 'text-emerald-600 bg-emerald-50'}`}>
+                          {monedaPdf === 'bs' ? 'Bs' : monedaPdf === 'bcv' ? 'BCV' : '$'}
+                        </span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
 
             <button onClick={onClose}
               className="w-full py-3 text-white font-bold text-xs rounded-xl transition-all shadow-lg hover:shadow-xl active:scale-[0.98] flex items-center justify-center gap-2"
               style={{ background: 'linear-gradient(135deg, #1B365D, #B8860B)' }}>
-              <ArrowRight size={14} /> Ir a Despachos
+              <ArrowRight size={14} /> {data._queued ? 'Entendido' : 'Ir a Despachos'}
             </button>
           </div>
         </div>
@@ -744,6 +754,8 @@ export default function VentaRapidaView() {
     ventaRapida.mutate({
       clienteId,
       clienteNombre: clienteSeleccionado?.nombre,
+      vendedorId: clienteSeleccionado?.vendedor_id || perfil?.id,
+      vendedorNombre: clienteSeleccionado?.vendedor?.nombre || perfil?.nombre,
       transportistaId: transportistaId || null,
       fleteUsd: flete,
       corteUsd: corte,
@@ -778,7 +790,7 @@ export default function VentaRapidaView() {
           cotizacionId: result.cotizacionId,
           clienteId: clienteId,
           clienteNombre: clienteSeleccionado?.nombre,
-          vendedorId: perfil?.id,
+          vendedorId: clienteSeleccionado?.vendedor_id || perfil?.id,
           transportistaId: transportistaId || null,
           transportista: transportistaSeleccionado?.nombre || null,
           flete,
@@ -792,6 +804,7 @@ export default function VentaRapidaView() {
           tasaBcv: tasaHook.tasaBcv?.precio || 0,
           formasPago: formasPagoFinales,
           notas,
+          _queued: result._queued,
         })
         // Reset form
         setStep(0)

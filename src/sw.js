@@ -22,6 +22,7 @@ self.addEventListener('activate', (event) => {
 
 const QUEUE_PREFIX = 'mq_'
 const MAX_ATTEMPTS = 3
+const OFFLINE_AUTH_TOKEN_KEY = 'offline_auth_access_token'
 
 // Procesa todos los items pendientes en la cola IDB
 async function processMutationQueueInSW() {
@@ -32,19 +33,147 @@ async function processMutationQueueInSW() {
 
   let done = 0
   let failed = 0
+  const idMap = {}
 
   for (const item of items) {
     try {
       // Leer JWT del IndexedDB de Supabase (clave estándar de supabase-js)
-      const sbKey = Object.keys(self).find((k) => k.startsWith('sb-')) ||
-        `sb-${self.location.hostname.split('.')[0]}-auth-token`
-      const authRaw = await get(sbKey)
-      const accessToken = authRaw?.access_token || authRaw?.session?.access_token
+      const authRaw = await get(OFFLINE_AUTH_TOKEN_KEY)
+      const accessToken = authRaw?.accessToken
 
       if (!accessToken) {
         // Sin token — posponer, el usuario necesita iniciar sesión
         failed++
         continue
+      }
+
+      // 1. Mapeo relacional de IDs temporales de clientes
+      if (item.type === 'VENTA_RAPIDA' || item.type === 'GUARDAR_COTIZACION') {
+        const tempClient = item.payload.clienteId || item.payload.headerData?.cliente_id
+        if (tempClient && String(tempClient).startsWith('local_cli_')) {
+          const realId = idMap[tempClient]
+          if (realId) {
+            if (item.payload.clienteId) item.payload.clienteId = realId
+            if (item.payload.headerData) item.payload.headerData.cliente_id = realId
+          } else {
+            throw new Error('El cliente temporal asociado no pudo ser creado en el servidor.')
+          }
+        }
+      }
+
+      // 2. Ejecutar petición real según tipo de item
+      if (item.type === 'CREAR_CLIENTE') {
+        const res = await fetch('/api/clientes/crear', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(item.payload),
+        })
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.error || `HTTP ${res.status}`)
+        }
+
+        const result = await res.json().catch(() => ({}))
+        if (item.localEntityId && result?.id) {
+          idMap[item.localEntityId] = result.id
+        }
+        if (item.payload.localId && result?.id) {
+          idMap[item.payload.localId] = result.id
+        }
+
+        await del(item.id)
+        done++
+      }
+
+      if (item.type === 'ACTUALIZAR_COTIZACION_ESTADO') {
+        const cotizacionId = idMap[item.payload.cotizacionId] || item.payload.cotizacionId
+        const res = await fetch(`/rest/v1/cotizaciones?id=eq.${cotizacionId}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+            apikey: accessToken,
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify({ estado: item.payload.estado }),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status} (estado cotizacion)`)
+        await del(item.id)
+        done++
+      }
+
+      if (item.type === 'CREAR_DESPACHO') {
+        const payload = {
+          ...item.payload,
+          cotizacionId: idMap[item.payload.cotizacionId] || item.payload.cotizacionId,
+        }
+        delete payload.despachoId
+        const res = await fetch('/api/despachos/crear', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(payload),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.error || `HTTP ${res.status}`)
+        }
+        const result = await res.json().catch(() => ({}))
+        if (item.localEntityId && result?.id) {
+          idMap[item.localEntityId] = result.id
+          await del(`offline_entity_despacho_${item.localEntityId}`)
+        }
+        await del(item.id)
+        done++
+      }
+
+      if (item.type === 'EDITAR_DESPACHO') {
+        const res = await fetch('/api/despachos/editar-pago', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            ...item.payload,
+            despachoId: idMap[item.payload.despachoId] || item.payload.despachoId,
+          }),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.error || `HTTP ${res.status}`)
+        }
+        await del(item.id)
+        done++
+      }
+
+      if (item.type?.startsWith('MARCAR_DESPACHO_')) {
+        const res = await fetch('/api/despachos/estado', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            despachoId: idMap[item.payload.despachoId] || item.payload.despachoId,
+            nuevoEstado: item.payload.nuevoEstado,
+            motivoDevolucion: item.payload.motivoDevolucion,
+            motivoAnulacion: item.payload.motivoAnulacion,
+            tasaBcv: item.payload.tasaBcv,
+          }),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.error || `HTTP ${res.status}`)
+        }
+        await del(item.id)
+        done++
       }
 
       if (item.type === 'VENTA_RAPIDA') {
@@ -82,6 +211,30 @@ async function processMutationQueueInSW() {
         if (!res.ok) {
           const data = await res.json().catch(() => ({}))
           throw new Error(data.error || `HTTP ${res.status}`)
+        }
+
+        const result = await res.json().catch(() => ({}))
+        if (item.localEntityId && result?.id) {
+          idMap[item.localEntityId] = result.id
+          await del(`offline_entity_cotizacion_${item.localEntityId}`)
+        }
+
+        if (payload.sendAfterSave && result.id) {
+          const sendRes = await fetch('/api/cotizaciones/enviar', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+              cotizacionId: result.id,
+              tasaBcv: Number(payload.tasaBcv) || 0
+            }),
+          })
+          if (!sendRes.ok) {
+            const sendData = await sendRes.json().catch(() => ({}))
+            throw new Error(sendData.error || `HTTP ${sendRes.status} (enviar)`)
+          }
         }
 
         await del(item.id)

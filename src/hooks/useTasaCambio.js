@@ -351,6 +351,7 @@ export function useTasaCambio() {
 
   // Fetch wrapper que usa el singleton global
   const fetchTasa = useCallback(async (esAutoUpdate = false) => {
+    if (useAuthStore.getState().offline) return
     if (!esAutoUpdate) setCargando(true)
     setError('')
 
@@ -374,23 +375,31 @@ export function useTasaCambio() {
     const lastFetchRef = { ts: 0 }
 
     const hasCachedRate = tasaRef.current?.precio > 0
-    fetchTasa(hasCachedRate)
+    if (!useAuthStore.getState().offline) {
+      fetchTasa(hasCachedRate)
+    }
     lastFetchRef.ts = Date.now()
 
     const intervalId = setInterval(() => {
-      fetchTasa(true)
+      if (!useAuthStore.getState().offline) {
+        fetchTasa(true)
+      }
       lastFetchRef.ts = Date.now()
     }, UPDATE_INTERVAL)
 
     const onVisible = () => {
       if (document.visibilityState === 'visible' && Date.now() - lastFetchRef.ts > MIN_REFRESH_INTERVAL) {
-        fetchTasa(true)
+        if (!useAuthStore.getState().offline) {
+          fetchTasa(true)
+        }
         lastFetchRef.ts = Date.now()
       }
     }
     const onFocus = () => {
       if (Date.now() - lastFetchRef.ts > MIN_REFRESH_INTERVAL) {
-        fetchTasa(true)
+        if (!useAuthStore.getState().offline) {
+          fetchTasa(true)
+        }
         lastFetchRef.ts = Date.now()
       }
     }
@@ -411,6 +420,9 @@ export function useTasaCambio() {
 
   // Guardar modo + valor en BD (dispara realtime a todos los clientes)
   const guardarTasaEnBD = useCallback((modo, valorManual) => {
+    if (useAuthStore.getState().offline) {
+      return
+    }
     localChangeTsRef.current = Date.now()
     const tasa_bcv_manual = modo === 'manual' && parseFloat(valorManual) > 0
       ? parseFloat(valorManual)

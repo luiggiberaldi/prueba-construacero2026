@@ -436,7 +436,7 @@ Conectar el proyecto al repositorio GitHub real y escribir las 15 migrations SQL
 ### Acciones realizadas
 
 **1. Configuración de Git:**
-- Remote origin actualizado a `https://github.com/luiggiberaldi/listo-pos-cotizaciones`
+- Remote origin actualizado a `https://github.com/luiggiberaldi/prueba-construacero2026`
 - Commit 1: `feat: estructura base + autenticación por roles (Fases 1 y 2)` — 260 archivos
   - Eliminados: android/, capacitor, PWA, componentes POS, hooks viejos, Groq
   - Creados: ARQUITECTURA.md, BITACORA.md, estructura de módulos, auth completo
@@ -1173,7 +1173,7 @@ El Worker de camelAI NO tiene los secrets de Supabase y causará errores 500.
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `VAPID_PUBLIC_KEY` — Texto plano (no sensibles)
 - `GROQ_KEYS_A/B/C` — Se inyectan desde `deploy.sh` vía `.dev.vars` (solo en camelAI)
 
-**GitHub Secrets** (repo `luiggiberaldi/listo-pos-cotizaciones`):
+**GitHub Secrets** (repo `luiggiberaldi/prueba-construacero2026`):
 - `CF_API_TOKEN` — Token de Cloudflare para deploy
 - `CF_ACCOUNT_ID` — Account ID de Cloudflare
 - `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` — Duplicados (mismo propósito)

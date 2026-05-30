@@ -17,17 +17,22 @@ import CambiarTransportistaModal from './CambiarTransportistaModal'
 import ConciliarCodModal from './ConciliarCodModal'
 import FacturaModal from './FacturaModal'
 import { showToast } from '../ui/Toast'
+import { getOfflineDocument } from '../../lib/offlineDocuments'
 import { MessageCircle } from 'lucide-react'
 import SeguimientoFijadoModal from '../ui/SeguimientoFijadoModal'
 import { compartirPorWhatsApp, generarMensaje } from '../../utils/whatsapp'
 import { calcComisionEstimada } from '../../utils/comisionUtils'
+import { generarDespachoPDF } from '../../services/pdf/despachoPDF'
+import { generarOrdenDespachoPDF } from '../../services/pdf/ordenDespachoPDF'
+import { generarGuiaDespachoPDF } from '../../services/pdf/guiaDespachoPDF'
+import { generarFacturaPDF } from '../../services/pdf/facturaPDF'
 
 export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular, onReciclar, tasa = 0, config = {}, estadoCambiando = false }) {
   const { data: configNegocio } = useConfigNegocio()
   const pctCabilla = Number(configNegocio?.comision_pct_cabilla ?? 0)
   const pctOtros   = Number(configNegocio?.comision_pct_otros   ?? 0)
   const catCabilla = (configNegocio?.comision_categoria_cabilla || 'Cabilla').toLowerCase()
-  const { perfil } = useAuthStore()
+  const { perfil, offline } = useAuthStore()
   const esSupervisor = (perfil?.rol === 'supervisor' || perfil?.rol === 'jefe')
   const esDesarrollador = perfil?.rol === 'desarrollador'
   const esAdministracion = perfil?.rol === 'administracion'
@@ -233,8 +238,8 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
     ? `COT-${String(despacho.cotizacion.numero).padStart(5, '0')}`
     : '—'
 
-  const canDespachar = (esAdministracion || esDesarrollador) && despacho.estado === 'pendiente'
-  const canEntregar = (perfil?.rol === 'logistica' || esDesarrollador) && despacho.estado === 'despachada'
+  const canDespachar = ['administracion', 'jefe', 'desarrollador'].includes(perfil?.rol) && despacho.estado === 'pendiente'
+  const canEntregar = ['logistica', 'jefe', 'desarrollador'].includes(perfil?.rol) && despacho.estado === 'despachada'
   const esVendedorPropio = perfil?.id === despacho.vendedor_id
   const canAnular = despacho.estado === 'pendiente' && (esDesarrollador || esAdministracion || esSupervisor || esVendedorPropio)
   const canDevolver = (despacho.estado === 'despachada' || despacho.estado === 'entregada') && ['logistica', 'jefe', 'desarrollador'].includes(perfil?.rol)
@@ -310,6 +315,17 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
   }
   // Helper: fetch notas_despacho_items con fallback offline
   async function fetchItemsDespacho() {
+    if (String(despacho.id).startsWith('local_') || despacho._local || despacho._queued) {
+      const doc = await getOfflineDocument('despacho', despacho.id)
+      return doc?.items || despacho.items || []
+    }
+    if (offline || !navigator.onLine) {
+      const { get } = await import('idb-keyval')
+      const cached = await get(`desp_detail_${despacho.id}`)
+      const cachedItems = cached?.data?.items || despacho.items || []
+      if (cachedItems.length > 0) return cachedItems
+      throw new Error('Este despacho no tiene artÃ­culos guardados localmente. ConÃ©ctate una vez para descargar el detalle antes de imprimir offline.')
+    }
     const res = await supabase
       .from('notas_despacho_items')
       .select('id, producto_id, codigo_snap, nombre_snap, unidad_snap, cantidad, precio_unit_usd, total_linea_usd, orden, es_prestamo, productos(categoria)')
@@ -325,10 +341,7 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
   async function descargarPDF() {
     setPdfLoading(true)
     try {
-      const [{ generarDespachoPDF }, itemsFinal] = await Promise.all([
-        import('../../services/pdf/despachoPDF'),
-        fetchItemsDespacho(),
-      ])
+      const itemsFinal = await fetchItemsDespacho()
       await generarDespachoPDF({
         despacho, items: itemsFinal, config,
         formaPago: despacho.forma_pago || '',
@@ -345,10 +358,7 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
   async function descargarOrdenDespacho() {
     setOrdenLoading(true)
     try {
-      const [{ generarOrdenDespachoPDF }, itemsFinal] = await Promise.all([
-        import('../../services/pdf/ordenDespachoPDF'),
-        fetchItemsDespacho(),
-      ])
+      const itemsFinal = await fetchItemsDespacho()
       await generarOrdenDespachoPDF({
         despacho, items: itemsFinal, config,
         formaPago: despacho.forma_pago || '',
@@ -365,10 +375,7 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
   async function descargarGuiaDespacho() {
     setGuiaLoading(true)
     try {
-      const [{ generarGuiaDespachoPDF }, itemsFinal] = await Promise.all([
-        import('../../services/pdf/guiaDespachoPDF'),
-        fetchItemsDespacho(),
-      ])
+      const itemsFinal = await fetchItemsDespacho()
       await generarGuiaDespachoPDF({
         despacho, items: itemsFinal, config
       })
@@ -424,10 +431,7 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
       setPdfLoading(true)
     }
     try {
-      const [{ generarFacturaPDF }, itemsFinal] = await Promise.all([
-        import('../../services/pdf/facturaPDF'),
-        fetchItemsDespacho(),
-      ])
+      const itemsFinal = await fetchItemsDespacho()
       const { blob, filename } = await generarFacturaPDF({
         despacho, items: itemsFinal, config,
         formaPago: despacho.forma_pago || '',
@@ -460,10 +464,7 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
     setPrintLoading(true)
     setShowPrintMenu(false)
     try {
-      const [{ generarDespachoPDF }, itemsFinal] = await Promise.all([
-        import('../../services/pdf/despachoPDF'),
-        fetchItemsDespacho(),
-      ])
+      const itemsFinal = await fetchItemsDespacho()
       const { blob, filename } = await generarDespachoPDF({
         despacho, items: itemsFinal, config,
         formaPago: despacho.forma_pago || '',
@@ -483,10 +484,7 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
     setPrintLoading(true)
     setShowPrintMenu(false)
     try {
-      const [{ generarDespachoPDF }, itemsFinal] = await Promise.all([
-        import('../../services/pdf/despachoPDF'),
-        fetchItemsDespacho(),
-      ])
+      const itemsFinal = await fetchItemsDespacho()
       const { blob, filename } = await generarDespachoPDF({
         despacho, items: itemsFinal, config,
         formaPago: despacho.forma_pago || '',
@@ -530,10 +528,7 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
     setPrintLoading(true)
     setShowPrintMenu(false)
     try {
-      const [{ generarOrdenDespachoPDF }, itemsFinal] = await Promise.all([
-        import('../../services/pdf/ordenDespachoPDF'),
-        fetchItemsDespacho(),
-      ])
+      const itemsFinal = await fetchItemsDespacho()
       const { blob, filename } = await generarOrdenDespachoPDF({
         despacho, items: itemsFinal, config,
         formaPago: despacho.forma_pago || '',
@@ -553,10 +548,7 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
     setPrintLoading(true)
     setShowPrintMenu(false)
     try {
-      const [{ generarGuiaDespachoPDF }, itemsFinal] = await Promise.all([
-        import('../../services/pdf/guiaDespachoPDF'),
-        fetchItemsDespacho(),
-      ])
+      const itemsFinal = await fetchItemsDespacho()
       const { blob, filename } = await generarGuiaDespachoPDF({
         despacho, items: itemsFinal, config,
         returnBlob: true,
@@ -573,10 +565,7 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
     setPrintLoading(true)
     setShowPrintMenu(false)
     try {
-      const [{ generarOrdenDespachoPDF }, itemsFinal] = await Promise.all([
-        import('../../services/pdf/ordenDespachoPDF'),
-        fetchItemsDespacho(),
-      ])
+      const itemsFinal = await fetchItemsDespacho()
       const { blob, filename } = await generarOrdenDespachoPDF({
         despacho, items: itemsFinal, config,
         formaPago: despacho.forma_pago || '',

@@ -7,18 +7,46 @@ import supabase from '../services/supabase/client'
 import useAuthStore from '../store/useAuthStore'
 import { sanitizePostgrestSearch } from '../utils/format'
 import { authFetch } from '../services/authFetch'
+import { showToast } from '../components/ui/Toast'
+import { enqueue } from '../lib/mutationQueue'
+import { getLocalClientes, saveLocalClienteOffline } from '../lib/offlineSnapshots'
 
 // ─── Keys de caché ────────────────────────────────────────────────────────────
 export const CLIENTES_KEY = ['clientes']
+const CLIENT_SEARCH_CLEAN_RE = new RegExp(String.raw`[.()\s/-]`, 'g')
 
 // ─── Consulta principal: listar clientes ─────────────────────────────────────
 // Todos los usuarios ven todos los clientes (via worker API que bypasea RLS)
 export function useClientes(busqueda = '') {
   const perfil = useAuthStore(useCallback(s => s.perfil, []))
+  const offline = useAuthStore(useCallback(s => s.offline, []))
 
   return useQuery({
-    queryKey: [...CLIENTES_KEY, perfil?.id || '', busqueda],
+    queryKey: [...CLIENTES_KEY, perfil?.id || '', busqueda, offline],
     queryFn: async () => {
+      if (offline) {
+        const localData = await getLocalClientes()
+        const raw = busqueda.trim().toLowerCase()
+        if (!raw) return localData
+        const norm = raw.replace(CLIENT_SEARCH_CLEAN_RE, '')
+
+        return localData.filter(c => {
+          const nombre = (c.nombre || '').toLowerCase()
+          const codigo = (c.codigo_cliente || '').toLowerCase()
+          const rif = (c.rif_cedula || '').toLowerCase().replace(CLIENT_SEARCH_CLEAN_RE, '')
+          const tel = (c.telefono || '').toLowerCase().replace(CLIENT_SEARCH_CLEAN_RE, '')
+          const email = (c.email || '').toLowerCase()
+
+          return (
+            nombre.includes(raw) ||
+            codigo.includes(raw) ||
+            rif.includes(norm) ||
+            tel.includes(norm) ||
+            email.includes(raw)
+          )
+        })
+      }
+
       const params = new URLSearchParams()
       if (busqueda.trim()) params.set('busqueda', busqueda.trim())
 
@@ -27,16 +55,23 @@ export function useClientes(busqueda = '') {
       return await res.json()
     },
     enabled: !!perfil,
-    staleTime: 1000 * 60 * 5,
+    staleTime: offline ? Infinity : 1000 * 60 * 5,
     gcTime: 1000 * 60 * 15,
   })
 }
 
 // ─── Consulta: obtener un cliente por ID ──────────────────────────────────────
 export function useCliente(id) {
+  const offline = useAuthStore(useCallback(s => s.offline, []))
   return useQuery({
-    queryKey: [...CLIENTES_KEY, id],
+    queryKey: [...CLIENTES_KEY, id, offline],
     queryFn: async () => {
+      if (offline) {
+        const localData = await getLocalClientes()
+        const found = localData.find(c => c.id === id)
+        if (found) return found
+        throw new Error('Cliente no encontrado en local')
+      }
       const { data, error } = await supabase
         .from('clientes')
         .select(`
@@ -52,7 +87,7 @@ export function useCliente(id) {
       return data
     },
     enabled: !!id,
-    staleTime: 1000 * 30,
+    staleTime: offline ? Infinity : 1000 * 30,
     gcTime: 1000 * 60 * 5,
   })
 }
@@ -62,31 +97,53 @@ export function useCliente(id) {
 export function useCrearCliente() {
   const qc = useQueryClient()
   const perfil = useAuthStore(useCallback(s => s.perfil, []))
+  const offline = useAuthStore(useCallback(s => s.offline, []))
 
   return useMutation({
     mutationFn: async (campos) => {
+      const payload = {
+        nombre:      campos.nombre.trim(),
+        rif_cedula:  campos.rif_cedula?.trim() || null,
+        telefono:    campos.telefono?.trim() || null,
+        email:       campos.email?.trim()     || null,
+        direccion:   campos.direccion?.trim() || null,
+        estado:      campos.estado?.trim()    || null,
+        ciudad:      campos.ciudad?.trim()    || null,
+        notas:       campos.notas?.trim()     || null,
+        tipo_cliente: campos.tipo_cliente || 'natural',
+        vendedor_id: perfil.id,
+      }
+
+      if (offline) {
+        const localId = `local_cli_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+        const localCli = {
+          id: localId,
+          ...payload,
+          vendedor: { id: perfil.id, nombre: perfil.nombre },
+          activo: true,
+          creado_en: new Date().toISOString()
+        }
+        await saveLocalClienteOffline(localCli)
+        await enqueue('CREAR_CLIENTE', { ...payload, localId })
+        return { _queued: true, cliente: localCli }
+      }
+
       const res = await authFetch('/api/clientes/crear', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nombre:      campos.nombre.trim(),
-          rif_cedula:  campos.rif_cedula?.trim() || null,
-          telefono:    campos.telefono?.trim() || null,
-          email:       campos.email?.trim()     || null,
-          direccion:   campos.direccion?.trim() || null,
-          estado:      campos.estado?.trim()    || null,
-          ciudad:      campos.ciudad?.trim()    || null,
-          notas:       campos.notas?.trim()     || null,
-          tipo_cliente: campos.tipo_cliente || 'natural',
-          vendedor_id: perfil.id,
-        })
+        body: JSON.stringify(payload)
       })
 
       const result = await res.json()
       if (!res.ok) throw new Error(result.error || 'Error al crear cliente')
       return result
     },
-    onSuccess: async () => {
+    onSuccess: async (res) => {
+      if (res?._queued) {
+        showToast('📋 Sin conexión — cliente guardado localmente.', 'warning')
+      } else {
+        showToast('Cliente creado con éxito', 'success')
+      }
       await qc.cancelQueries({ queryKey: CLIENTES_KEY })
       qc.invalidateQueries({ queryKey: CLIENTES_KEY, exact: false })
     },

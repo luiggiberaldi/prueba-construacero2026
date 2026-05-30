@@ -13,9 +13,9 @@
     "remote": true
   },
   "vars": {
-    "SUPABASE_URL": "https://oyfyuszgjwcepjpngclv.supabase.co",
-    "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im95Znl1c3pnandjZXBqcG5nY2x2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0Mjk0NDMsImV4cCI6MjA5MTAwNTQ0M30.auhmnHCQ3a9wyv0nmhqWi1Q8iz0wavResvgsly6Gibs",
-    "SUPABASE_SERVICE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im95Znl1c3pnandjZXBqcG5nY2x2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTQyOTQ0MywiZXhwIjoyMDkxMDA1NDQzfQ.YoMbefzmBd7gbhRQeVNCagSXte_87OQIeYkwCasD8wk",
+    "SUPABASE_URL": "https://opbeytvsuazywtsokxfi.supabase.co",
+    "SUPABASE_ANON_KEY": "YOUR_SUPABASE_ANON_KEY",
+    "SUPABASE_SERVICE_KEY": "YOUR_SUPABASE_SERVICE_KEY",
     "DEV_SUPER_CODE": "24457713"
   }
 }

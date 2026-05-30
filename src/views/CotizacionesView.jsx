@@ -115,7 +115,7 @@ import { FORMAS_PAGO } from '../constants/formasPago'
 
 
 function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 }) {
-  const { data: detalle } = useCotizacion(cotizacion?.id)
+  const { data: detalle, isError: detalleError } = useCotizacion(cotizacion?.id)
   const { data: clientes = [] } = useClientes()
   const [transportistaId, setTransportistaId] = useState('')
   const [fleteUsd, setFleteUsd] = useState('')
@@ -137,6 +137,7 @@ function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 })
   const [esCod, setEsCod] = useState(false)
 
   const perfil = useAuthStore(useCallback(s => s.perfil, []))
+  const offline = useAuthStore(useCallback(s => s.offline, []))
 
   const billingCliente = useMemo(() => {
     return clienteFacturaId
@@ -152,11 +153,15 @@ function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 })
     )
   }, [billingCliente, perfil])
 
-  const items = detalle?.items ?? []
+  const items = detalle?.items?.length ? detalle.items : (cotizacion?.items || [])
 
   // Fetch stock for items when they load
   useEffect(() => {
     if (items.length === 0) return
+    if (offline || !navigator.onLine) {
+      setStockMap({})
+      return
+    }
     const productIds = [...new Set(items.map(i => i.producto_id).filter(Boolean))]
     if (productIds.length === 0) return
     let cancelled = false
@@ -165,7 +170,7 @@ function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 })
         if (!cancelled && data) setStockMap(Object.fromEntries(data.map(p => [p.id, p.stock_actual])))
       })
     return () => { cancelled = true }
-  }, [detalle])
+  }, [detalle, offline, items.length])
   const totalSinFlete = Number(cotizacion?.total_usd || 0) - Number(cotizacion?.costo_envio_usd || 0) - Number(cotizacion?.corte_usd || 0)
   const totalConFlete = totalSinFlete + Number(fleteUsd || 0) + Number(corteUsd || 0)
 
@@ -276,9 +281,13 @@ function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 })
           <div className="lg:flex-1 min-h-0 overflow-y-auto p-4 lg:p-5 space-y-3 border-b lg:border-b-0 lg:border-r border-slate-100">
 
             {/* Lista tipo recibo compacta */}
-            {items.length === 0 ? (
+            {items.length === 0 && !detalleError && !offline ? (
               <div className="flex items-center justify-center py-10">
                 <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : items.length === 0 ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                No hay artículos guardados localmente para esta cotización. Conéctate una vez para descargar el detalle antes de despacharla offline.
               </div>
             ) : (
               <div className="space-y-2">
@@ -766,7 +775,8 @@ function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 })
                   clienteFacturaId || null,
                   direccionEnvioActiva ? direccionEnvioDireccion : null,
                   direccionEnvioActiva ? direccionEnvioCiudad : null,
-                  direccionEnvioActiva ? direccionEnvioEstado : null
+                  direccionEnvioActiva ? direccionEnvioEstado : null,
+                  detalle || { ...cotizacion, items }
                 )
               }} disabled={
                 cargando ||
@@ -950,11 +960,12 @@ function ListaCotizaciones({ onNueva, onEditar, despacharCotizacion }) {
     setCotizacionAAnular(null)
   }
 
-  async function confirmarDespachar(formaPago = '', transportistaId = null, fleteUsd = 0, corteUsd = 0, referenciaPago = '', formaPagoCliente = '', notas = '', clienteFacturaId = null, dirEnvio = null, ciudadEnvio = null, estadoEnvio = null) {
+  async function confirmarDespachar(formaPago = '', transportistaId = null, fleteUsd = 0, corteUsd = 0, referenciaPago = '', formaPagoCliente = '', notas = '', clienteFacturaId = null, dirEnvio = null, ciudadEnvio = null, estadoEnvio = null, detalleCotizacion = null) {
     if (!cotizacionADespachar) return
     try {
       await crearDespacho.mutateAsync({
         cotizacionId: cotizacionADespachar.id,
+        cotizacionSnapshot: detalleCotizacion || cotizacionADespachar,
         numeroCotizacion: cotizacionADespachar.numero,
         clienteNombre: cotizacionADespachar.cliente?.nombre,
         formaPago: formaPago || null,

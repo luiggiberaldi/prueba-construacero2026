@@ -22,55 +22,25 @@ import AppLayout from './components/layout/AppLayout'
 // Auth (se carga siempre en /login)
 import LoginPage from './modules/auth/LoginPage'
 
-// ─── Lazy import con retry automático para chunks obsoletos ──────────────────
-function lazyRetry(importFn) {
-  return lazy(() =>
-    importFn().catch((err) => {
-      // Si falla la carga de un módulo dinámico (chunks viejos tras un deploy),
-      // recargar la página una sola vez para obtener los chunks nuevos
-      const key = 'lazy_retry_reload'
-      const lastReload = sessionStorage.getItem(key)
-      const now = Date.now()
-      if (!lastReload || now - Number(lastReload) > 10000) {
-        sessionStorage.setItem(key, String(now))
-        window.location.reload()
-      }
-      throw err
-    })
-  )
-}
-
-// Dashboard — preloaded since it's the default route
-const DashboardView = lazyRetry(() => import('./views/DashboardView'))
-// Preload Dashboard chunk in idle time
-if (typeof window !== 'undefined') {
-  const preloadDashboard = () => import('./views/DashboardView')
-  if ('requestIdleCallback' in window) {
-    requestIdleCallback(preloadDashboard)
-  } else {
-    setTimeout(preloadDashboard, 200)
-  }
-}
-
-// Views — lazy loading para que solo se descarguen al navegar
-const ClientesView      = lazyRetry(() => import('./views/ClientesView'))
-const CotizacionesView  = lazyRetry(() => import('./views/CotizacionesView'))
-const DespachosView     = lazyRetry(() => import('./views/DespachosView'))
-const VentaRapidaView   = lazyRetry(() => import('./views/VentaRapidaView'))
-const InventarioView    = lazyRetry(() => import('./views/InventarioView'))
-const TransportistasView = lazyRetry(() => import('./views/TransportistasView'))
-const UsuariosView      = lazyRetry(() => import('./views/UsuariosView'))
-// Auditoría activada exclusivamente para desarrollador
-const AuditoriaView     = lazyRetry(() => import('./views/AuditoriaView'))
-const ConfiguracionView = lazyRetry(() => import('./views/ConfiguracionView'))
-const ComisionesView    = lazyRetry(() => import('./views/ComisionesView'))
-const ReportesView      = lazyRetry(() => import('./views/ReportesView'))
-const LogsView              = lazyRetry(() => import('./views/LogsView'))
-const ReporteVendedoresView = lazyRetry(() => import('./views/ReporteVendedoresView'))
-const OrdenCompraView       = lazyRetry(() => import('./views/OrdenCompraView'))
-const SeguimientoOperativoView = lazyRetry(() => import('./views/SeguimientoOperativoView'))
-const TesterView        = lazyRetry(() => import('./views/TesterView'))
-const TesterFlowView    = lazyRetry(() => import('./views/TesterFlowView'))
+// Views — importadas estáticamente para asegurar soporte 100% offline sin fallos de pre-carga
+import DashboardView from './views/DashboardView'
+import ClientesView from './views/ClientesView'
+import CotizacionesView from './views/CotizacionesView'
+import DespachosView from './views/DespachosView'
+import VentaRapidaView from './views/VentaRapidaView'
+import InventarioView from './views/InventarioView'
+import TransportistasView from './views/TransportistasView'
+import UsuariosView from './views/UsuariosView'
+import AuditoriaView from './views/AuditoriaView'
+import ConfiguracionView from './views/ConfiguracionView'
+import ComisionesView from './views/ComisionesView'
+import ReportesView from './views/ReportesView'
+import LogsView from './views/LogsView'
+import ReporteVendedoresView from './views/ReporteVendedoresView'
+import OrdenCompraView from './views/OrdenCompraView'
+import SeguimientoOperativoView from './views/SeguimientoOperativoView'
+import TesterView from './views/TesterView'
+import TesterFlowView from './views/TesterFlowView'
 
 // ─── QueryClient — importado desde lib/queryClient.js ────────────────────────
 

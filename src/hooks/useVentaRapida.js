@@ -22,12 +22,15 @@ export function useVentaRapida() {
 
   return useMutation({
     mutationFn: async ({
-      clienteId, clienteNombre, transportistaId, fleteUsd, corteUsd,
+      clienteId, clienteNombre, vendedorId, vendedorNombre, transportistaId, fleteUsd, corteUsd,
       formaPago, formaPagoCliente, referenciaPago,
       notas, notasCliente, items, costoEnvioUsd, tasaBcv,
     }) => {
       const payload = {
-        clienteId, transportistaId: transportistaId || null,
+        clienteId,
+        vendedorId: vendedorId || null,
+        vendedorNombre: vendedorNombre || null,
+        transportistaId: transportistaId || null,
         fleteUsd: Number(fleteUsd) || 0,
         corteUsd: Number(corteUsd) || 0,
         formaPago, formaPagoCliente: formaPagoCliente || null,
@@ -36,6 +39,19 @@ export function useVentaRapida() {
         items, descuentoGlobalPct: 0,
         costoEnvioUsd: Number(costoEnvioUsd) || 0,
         tasaBcv,
+      }
+
+      const offline = useAuthStore.getState().offline
+      if (offline) {
+        await enqueue('VENTA_RAPIDA', payload)
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.ready.then(reg => {
+            if ('SyncManager' in window) {
+              reg.sync.register('sync-mutations').catch(() => {})
+            }
+          }).catch(() => {})
+        }
+        return { _queued: true, clienteNombre }
       }
 
       // ─── Intento online ────────────────────────────────────────────────────
@@ -54,10 +70,11 @@ export function useVentaRapida() {
 
         // Intentar registrar Background Sync (fallback: 'online' event en useMutationQueue)
         if ('serviceWorker' in navigator) {
-          try {
-            const reg = await navigator.serviceWorker.ready
-            if ('SyncManager' in window) await reg.sync.register('sync-mutations')
-          } catch { /* ignorar */ }
+          navigator.serviceWorker.ready.then(reg => {
+            if ('SyncManager' in window) {
+              reg.sync.register('sync-mutations').catch(() => {})
+            }
+          }).catch(() => {})
         }
 
         // Señal especial para onSuccess — no es un error, es una venta encolada
@@ -109,7 +126,9 @@ export function useVentaRapida() {
         if (Array.isArray(fp)) {
           esCod = fp.some(f => f.metodo === 'Cobro a destino')
         }
-      } catch {}
+      } catch {
+        // Si la forma de pago no se puede interpretar, se trata como no COD.
+      }
 
       await qc.cancelQueries({ queryKey: DESPACHOS_KEY })
       await qc.cancelQueries({ queryKey: COTIZACIONES_KEY })

@@ -1,5 +1,17 @@
-const SUPABASE_URL = 'https://oyfyuszgjwcepjpngclv.supabase.co'
-const SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im95Znl1c3pnandjZXBqcG5nY2x2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTQyOTQ0MywiZXhwIjoyMDkxMDA1NDQzfQ.YoMbefzmBd7gbhRQeVNCagSXte_87OQIeYkwCasD8wk'
+import fs from 'fs'
+
+const getEnvVar = (file, name) => {
+  try {
+    const content = fs.readFileSync(file, 'utf-8')
+    const match = content.match(new RegExp(`${name}=(.*)`))
+    return match ? match[1].trim() : null
+  } catch {
+    return null
+  }
+}
+
+const SUPABASE_URL = getEnvVar('.env', 'VITE_SUPABASE_URL')
+const SERVICE_KEY = getEnvVar('.env.secrets', 'SUPABASE_SERVICE_KEY')
 const h = { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, 'Content-Type': 'application/json' }
 
 async function run() {

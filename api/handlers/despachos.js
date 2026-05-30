@@ -53,14 +53,20 @@ export async function handleCrearDespacho(request, env) {
     // 1+2. Fetch cotización + check existing despacho in parallel
     const [cotRes, existRes] = await Promise.all([
       fetch(`${env.SUPABASE_URL}/rest/v1/cotizaciones?id=eq.${cotizacionId}&select=*`, { headers }),
-      fetch(`${env.SUPABASE_URL}/rest/v1/notas_despacho?cotizacion_id=eq.${cotizacionId}&select=id&limit=1`, { headers }),
+      fetch(`${env.SUPABASE_URL}/rest/v1/notas_despacho?cotizacion_id=eq.${cotizacionId}&select=id,numero&limit=1`, { headers }),
     ]);
     const [cot] = await cotRes.json();
     if (!cot) return jsonError('Cotización no encontrada', 404, request);
 
     const existing = await existRes.json();
     if (existing && existing.length > 0) {
-      return jsonError('Ya existe una nota de despacho para esta cotización', 400, request);
+      return json({
+        id: existing[0].id,
+        numero: existing[0].numero,
+        numeroCotizacion: cot.numero,
+        clienteNombre: 'cliente',
+        alreadyExists: true,
+      }, 200, request);
     }
 
     const esSupervisorOp = operador.rol === 'supervisor';

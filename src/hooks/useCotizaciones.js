@@ -16,13 +16,62 @@ import {
 import { showToast } from '../components/ui/Toast'
 import { sendPushNotification } from './usePushNotifications'
 import { STOCK_COMPROMETIDO_KEY } from './useStockComprometido'
-import { enqueue } from '../lib/mutationQueue'
+import { enqueue, dequeuePending } from '../lib/mutationQueue'
+import { getLocalCotizaciones, getLocalUsuarios, getLocalClientes } from '../lib/offlineSnapshots'
+import { listOfflineEntities, saveOfflineEntity, updateOfflineEntity } from '../lib/offlineEntities'
+import { getOfflineDocument, saveOfflineDocument } from '../lib/offlineDocuments'
 
 export const COTIZACIONES_KEY = ['cotizaciones']
+
+function buildCotizacionFromPayload(payload, createdAt = Date.now()) {
+  return {
+    id: payload.cotizacionId,
+    numero: 'LOCAL',
+    version: payload.headerData.version || 1,
+    estado: payload.sendAfterSave ? 'enviada' : (payload.headerData.estado || 'borrador'),
+    subtotal_usd: payload.headerData.subtotal_usd || 0,
+    descuento_global_pct: payload.headerData.descuento_global_pct || 0,
+    descuento_usd: payload.headerData.descuento_usd || 0,
+    costo_envio_usd: payload.headerData.costo_envio_usd || 0,
+    corte_usd: payload.headerData.corte_usd || 0,
+    total_usd: payload.headerData.total_usd || 0,
+    tasa_bcv_snapshot: payload.headerData.tasa_bcv_snapshot || Number(payload.tasaBcv) || 0,
+    total_bs_snapshot: payload.headerData.total_bs_snapshot || 0,
+    creado_en: new Date(createdAt).toISOString(),
+    actualizado_en: new Date(createdAt).toISOString(),
+    enviada_en: payload.sendAfterSave ? new Date(createdAt).toISOString() : null,
+    notas_cliente: payload.headerData.notas_cliente || null,
+    cliente_id: payload.headerData.cliente_id,
+    vendedor_id: payload.headerData.vendedor_id,
+    transportista_id: payload.headerData.transportista_id || null,
+    notas_internas: payload.headerData.notas_internas || null,
+    items_count: payload.items?.length || 0,
+    despacho: null,
+    seguimiento: null,
+    _queued: true,
+    _local: true,
+  }
+}
+
+function buildItemsFromPayload(payload) {
+  return (payload.items || []).map(it => ({
+    producto_id: it.producto_id,
+    codigo_snap: it.codigo_snap,
+    nombre_snap: it.nombre_snap,
+    unidad_snap: it.unidad_snap,
+    cantidad: it.cantidad,
+    precio_unit_usd: it.precio_unit_usd,
+    descuento_pct: it.descuento_pct,
+    total_linea_usd: it.total_linea_usd,
+    orden: it.orden,
+    origen: it.producto_id ? 'inventario' : 'externo'
+  }))
+}
 
 // ─── Lista de cotizaciones ────────────────────────────────────────────────────
 export function useCotizaciones({ estado = '', clienteId = '', veTodos = false } = {}) {
   const perfil = useAuthStore(useCallback(s => s.perfil, []))
+  const offline = useAuthStore(useCallback(s => s.offline, []))
   const esSupervisor = (perfil?.rol === 'supervisor' || perfil?.rol === 'jefe')
   const esDesarrollador = perfil?.rol === 'desarrollador'
   const esAdmin = perfil?.rol === 'administracion'
@@ -31,8 +80,51 @@ export function useCotizaciones({ estado = '', clienteId = '', veTodos = false }
   const verTodosEfectivo = esAdmin || ((esSupervisor || esDesarrollador) && veTodos)
 
   return useQuery({
-    queryKey: [...COTIZACIONES_KEY, estado, clienteId, esPrivilegiado, verTodosEfectivo, perfil?.id],
+    queryKey: [...COTIZACIONES_KEY, estado, clienteId, esPrivilegiado, verTodosEfectivo, perfil?.id, offline],
     queryFn: async () => {
+      if (offline) {
+        const localCotizaciones = await getLocalCotizaciones()
+        const localEntities = await listOfflineEntities('cotizacion')
+        const pendingMutations = await dequeuePending()
+        
+        const localDrafts = pendingMutations
+          .filter(m => m.type === 'GUARDAR_COTIZACION')
+          .map(m => buildCotizacionFromPayload(m.payload, m.createdAt))
+
+        const materialized = localEntities.map(row => ({ ...row.data, _queued: row.syncStatus !== 'synced', _local: true }))
+        const seenLocal = new Set(materialized.map(c => c.id))
+        let combined = [...materialized, ...localDrafts.filter(c => !seenLocal.has(c.id)), ...localCotizaciones]
+
+        if (!verTodosEfectivo) {
+          combined = combined.filter(c => c.vendedor_id === perfil?.id)
+        }
+        if (estado) {
+          combined = combined.filter(c => c.estado === estado)
+        }
+        if (clienteId) {
+          combined = combined.filter(c => c.cliente_id === clienteId)
+        }
+
+        const localClientes = await getLocalClientes()
+        const localUsuarios = await getLocalUsuarios()
+
+        const clientesMap = Object.fromEntries(localClientes.map(c => [c.id, c]))
+        const usuariosMap = Object.fromEntries(localUsuarios.map(u => [u.id, u]))
+
+        return combined.map(c => {
+          const vendedor = usuariosMap[c.vendedor_id] || (c.vendedor_id === perfil?.id ? perfil : null)
+          const cliente = clientesMap[c.cliente_id] || null
+          if (cliente && vendedor && !cliente.vendedor) {
+            cliente.vendedor = vendedor
+          }
+          return {
+            ...c,
+            cliente,
+            vendedor
+          }
+        })
+      }
+
       // Query cotizaciones (RLS and our logic will filter by vendedor_id)
       const tabla = 'cotizaciones'
       const selectCols = esPrivilegiado
@@ -106,11 +198,67 @@ export function useCotizaciones({ estado = '', clienteId = '', veTodos = false }
 // ─── Cotización individual con items ─────────────────────────────────────────
 export function useCotizacion(id) {
   const perfil = useAuthStore(useCallback(s => s.perfil, []))
-  const esSupervisor = (perfil?.rol === 'supervisor' || perfil?.rol === 'jefe')
+  const offline = useAuthStore(useCallback(s => s.offline, []))
 
   return useQuery({
-    queryKey: [...COTIZACIONES_KEY, id],
+    queryKey: [...COTIZACIONES_KEY, id, offline],
     queryFn: async () => {
+      if (offline) {
+        // 1. Verificar si está en la cola de mutaciones
+        const pendingMutations = await dequeuePending()
+        const foundM = pendingMutations.find(m => m.type === 'GUARDAR_COTIZACION' && m.payload?.cotizacionId === id)
+        const foundEntity = await listOfflineEntities('cotizacion').then(rows => rows.find(row => row.id === id))
+        
+        let cot = null
+        let items = []
+
+        if (foundEntity) {
+          cot = foundEntity.data
+          const doc = await getOfflineDocument('cotizacion', id)
+          items = doc?.items || cot.items || []
+        } else if (foundM) {
+          const payload = foundM.payload
+          cot = buildCotizacionFromPayload(payload, foundM.createdAt)
+          items = buildItemsFromPayload(payload)
+        } else {
+          // 2. Verificar cache de detalles cotización
+          const { get } = await import('idb-keyval')
+          const cachedDetail = await get(`cot_detail_${id}`)
+          if (cachedDetail?.data) {
+            return cachedDetail.data
+          }
+
+          // Fallback a buscar en la lista general de cotizaciones
+          const localCotizaciones = await getLocalCotizaciones()
+          const foundList = localCotizaciones.find(c => c.id === id)
+          if (!foundList) {
+            throw new Error('Cotización no encontrada localmente')
+          }
+          cot = foundList
+          items = []
+        }
+
+        // Hidratar cliente y vendedor offline
+        const localClientes = await getLocalClientes()
+        const localUsuarios = await getLocalUsuarios()
+
+        const clientesMap = Object.fromEntries(localClientes.map(c => [c.id, c]))
+        const usuariosMap = Object.fromEntries(localUsuarios.map(u => [u.id, u]))
+
+        const vendedor = usuariosMap[cot.vendedor_id] || (cot.vendedor_id === perfil?.id ? perfil : null)
+        const cliente = clientesMap[cot.cliente_id] || null
+        if (cliente && vendedor && !cliente.vendedor) {
+          cliente.vendedor = vendedor
+        }
+
+        return {
+          ...cot,
+          cliente,
+          vendedor,
+          items
+        }
+      }
+
       const tabla = 'cotizaciones'
 
       // Columnas planas (sin FK joins — cliente y vendedor se buscan por separado)
@@ -167,13 +315,20 @@ export function useCotizacion(id) {
         vendedor: lookups[1]?.data ?? null,
       }
 
-      return { 
+      const finalResult = { 
         ...cot, 
         items: (itemsRes.data ?? []).map(it => ({
           ...it,
           origen: it.producto_id ? (it.origen || 'inventario') : 'externo'
         }))
       }
+
+      // Guardar en cache offline en background
+      import('idb-keyval').then(({ set }) => {
+        set(`cot_detail_${id}`, { data: finalResult, timestamp: Date.now() }).catch(() => {})
+      })
+
+      return finalResult
     },
     enabled: !!id && !!perfil,
     staleTime: 1000 * 30,
@@ -189,7 +344,7 @@ export function useGuardarBorrador() {
   const perfil = useAuthStore(useCallback(s => s.perfil, []))
 
   return useMutation({
-    mutationFn: async ({ cotizacionId = null, campos, items }) => {
+    mutationFn: async ({ cotizacionId = null, campos, items, sendAfterSave = false, tasaBcv = null }) => {
       // Calcular totales
       const { subtotal, descuentoUsd, totalUsd } = calcTotales(
         items, campos.descuentoGlobalPct, campos.costoEnvioUsd, campos.corteUsd
@@ -223,7 +378,36 @@ export function useGuardarBorrador() {
         origen:          it.productoId ? (it.origen || 'inventario') : 'externo', // Fix: usar productoId (camelCase)
       }))
 
-      const payload = { cotizacionId, headerData, items: itemRows }
+      const payload = { cotizacionId, headerData, items: itemRows, sendAfterSave, tasaBcv }
+
+      const offline = useAuthStore.getState().offline
+      if (offline) {
+        const localId = cotizacionId ?? `local_cot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+        const queuedPayload = { ...payload, cotizacionId: localId }
+        const cotizacionLocal = buildCotizacionFromPayload(queuedPayload)
+        await saveOfflineEntity('cotizacion', localId, cotizacionLocal)
+        await saveOfflineDocument('cotizacion', localId, {
+          cotizacion: cotizacionLocal,
+          items: buildItemsFromPayload(queuedPayload),
+          tasa: tasaBcv,
+          syncStatus: 'pending',
+        })
+        await enqueue('GUARDAR_COTIZACION', queuedPayload, {
+          entity: 'cotizacion',
+          localEntityId: localId,
+          operationLabel: sendAfterSave ? 'Guardar y enviar cotización' : 'Guardar cotización',
+        })
+
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.ready.then(reg => {
+            if ('SyncManager' in window) {
+              reg.sync.register('sync-mutations').catch(() => {})
+            }
+          }).catch(() => {})
+        }
+
+        return { _queued: true, localId }
+      }
 
       // ─── Intento online ────────────────────────────────────────────────────
       let res, data
@@ -235,10 +419,17 @@ export function useGuardarBorrador() {
 
         const headers = await getAuthHeaders()
         console.log('payload cotizacion (hook)', payload)
+
+        // Limpiar el ID local temporal para el servidor
+        const apiPayload = { ...payload }
+        if (apiPayload.cotizacionId?.startsWith?.('local_')) {
+          apiPayload.cotizacionId = null
+        }
+
         res = await fetch(apiUrl('/api/cotizaciones/guardar'), {
           method: 'POST',
           headers,
-          body: JSON.stringify(payload),
+          body: JSON.stringify(apiPayload),
           signal: controller.signal
         })
         clearTimeout(timeoutId)
@@ -252,8 +443,21 @@ export function useGuardarBorrador() {
         }
       } catch (err) {
         // Error de red, timeout, o server caído → encolar en IDB con ID local temporal
-        const localId = cotizacionId ?? `local_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
-        await enqueue('GUARDAR_COTIZACION', { ...payload, cotizacionId: localId })
+        const localId = cotizacionId ?? `local_cot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+        const queuedPayload = { ...payload, cotizacionId: localId }
+        const cotizacionLocal = buildCotizacionFromPayload(queuedPayload)
+        await saveOfflineEntity('cotizacion', localId, cotizacionLocal)
+        await saveOfflineDocument('cotizacion', localId, {
+          cotizacion: cotizacionLocal,
+          items: buildItemsFromPayload(queuedPayload),
+          tasa: tasaBcv,
+          syncStatus: 'pending',
+        })
+        await enqueue('GUARDAR_COTIZACION', queuedPayload, {
+          entity: 'cotizacion',
+          localEntityId: localId,
+          operationLabel: sendAfterSave ? 'Guardar y enviar cotización' : 'Guardar cotización',
+        })
 
         if ('serviceWorker' in navigator) {
           // No usamos await aquí porque en desarrollo (localhost) si el SW no está activo,
@@ -294,7 +498,8 @@ export function useEnviarCotizacion() {
 
   return useMutation({
     mutationFn: async ({ cotizacionId, tasaBcv }) => {
-      if (!navigator.onLine || String(cotizacionId).startsWith('local_')) {
+      const offline = useAuthStore.getState().offline
+      if (offline || String(cotizacionId).startsWith('local_')) {
         throw new Error('Estás offline. La cotización se guardó como borrador local y podrás enviarla al recuperar la conexión.')
       }
 
@@ -417,6 +622,22 @@ export function useActualizarEstado() {
 
   return useMutation({
     mutationFn: async ({ id, estado, numero, clienteNombre, totalUsd, vendedorId }) => {
+      const offline = useAuthStore.getState().offline
+      if (offline || String(id).startsWith('local_')) {
+        await updateOfflineEntity('cotizacion', id, {
+          estado,
+          actualizado_en: new Date().toISOString(),
+          ...(estado === 'enviada' ? { enviada_en: new Date().toISOString() } : {}),
+        })
+        await enqueue('ACTUALIZAR_COTIZACION_ESTADO', { cotizacionId: id, estado }, {
+          entity: 'cotizacion',
+          localEntityId: id,
+          dependsOn: String(id).startsWith('local_') ? [id] : [],
+          operationLabel: `Cambiar cotización a ${estado}`,
+        })
+        return { estado, numero, clienteNombre, totalUsd, vendedorId, _queued: true }
+      }
+
       const { error } = await supabase
         .from('cotizaciones')
         .update({ estado })

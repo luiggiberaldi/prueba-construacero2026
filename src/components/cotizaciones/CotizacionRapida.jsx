@@ -164,21 +164,28 @@ export default function CotizacionRapida({ onVolver, onGuardado }) {
     setEnviando(true)
     try {
       const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('La operación tardó demasiado. Verifica tu conexión e intenta de nuevo.')), 30000))
-      const id = await Promise.race([
+      const res = await Promise.race([
         guardarBorrador.mutateAsync({
           cotizacionId: null,
           campos: { clienteId, descuentoGlobalPct, costoEnvioUsd: 0 },
           items,
+          sendAfterSave: true,
+          tasaBcv: tasa,
         }),
         timeout,
       ])
+
+      if (res?._queued) {
+        showToast('📋 Sin conexión — cotización encolada para enviarse al reconectar.', 'warning', 7000)
+        onGuardado?.()
+        return
+      }
+
       await Promise.race([
-        enviarCotizacion.mutateAsync({ cotizacionId: id, tasaBcv: tasa }),
+        enviarCotizacion.mutateAsync({ cotizacionId: res.id, tasaBcv: tasa }),
         timeout,
       ])
       showToast('Cotización enviada exitosamente', 'success')
-
-
       onGuardado?.()
     } catch (e) {
       setError(e.message ?? 'Error al enviar')

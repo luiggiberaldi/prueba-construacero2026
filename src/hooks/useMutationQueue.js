@@ -1,15 +1,14 @@
 // src/hooks/useMutationQueue.js
 // Hook para leer el estado de la cola de mutaciones offline y procesarla.
-// Muestra badge de "N ventas pendientes" y permite reintentar fallidas.
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
-  dequeuePending,
+  countAll,
   dequeueFailed,
-  retryFailed,
+  dequeuePending,
   discardFailed,
   processQueue,
-  countAll,
+  retryFailed,
 } from '../lib/mutationQueue'
 import { apiUrl } from '../services/apiBase'
 import supabase from '../services/supabase/client'
@@ -20,15 +19,42 @@ import { COTIZACIONES_KEY } from './useCotizaciones'
 import { COMISIONES_KEY } from './useComisiones'
 import { CXC_KEY } from './useCuentasCobrar'
 import { STOCK_COMPROMETIDO_KEY } from './useStockComprometido'
+import { CLIENTES_KEY } from './useClientes'
+import { clearLocalClientesOffline } from '../lib/offlineSnapshots'
+import { removeOfflineEntity } from '../lib/offlineEntities'
+import useAuthStore from '../store/useAuthStore'
 
-// ─── Dispatcher: convierte un item de la cola en un fetch real ────────────────
-async function dispatchItem(item) {
+async function dispatchItem(item, idMap = {}) {
   const { data: { session } } = await supabase.auth.getSession()
-  if (!session?.access_token) throw new Error('Sin sesión — posponer sync')
+  if (!session?.access_token) throw new Error('Sin sesion - posponer sync')
 
   const headers = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${session.access_token}`,
+  }
+  const operadorActivoId = useAuthStore.getState().perfil?.id
+  if (operadorActivoId) headers['X-Operator-Id'] = operadorActivoId
+  const mapId = (id) => idMap[id] || id
+
+  if (item.type === 'VENTA_RAPIDA' || item.type === 'GUARDAR_COTIZACION') {
+    const tempClient = item.payload.clienteId || item.payload.headerData?.cliente_id
+    if (tempClient && String(tempClient).startsWith('local_cli_')) {
+      const realId = idMap[tempClient]
+      if (!realId) throw new Error('El cliente temporal asociado no pudo ser creado en el servidor.')
+      if (item.payload.clienteId) item.payload.clienteId = realId
+      if (item.payload.headerData) item.payload.headerData.cliente_id = realId
+    }
+  }
+
+  if (item.type === 'CREAR_CLIENTE') {
+    const res = await fetch(apiUrl('/api/clientes/crear'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(item.payload),
+    })
+    const result = await res.json()
+    if (!res.ok) throw new Error(result.error || 'Error al crear cliente offline')
+    return result
   }
 
   if (item.type === 'VENTA_RAPIDA') {
@@ -43,25 +69,86 @@ async function dispatchItem(item) {
   }
 
   if (item.type === 'GUARDAR_COTIZACION') {
-    // Si el cotizacionId es local_ → crear nueva (sin ID)
     const payload = { ...item.payload }
-    if (payload.cotizacionId?.startsWith?.('local_')) {
-      payload.cotizacionId = null
-    }
+    if (payload.cotizacionId?.startsWith?.('local_')) payload.cotizacionId = null
     const res = await fetch(apiUrl('/api/cotizaciones/guardar'), {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
     })
     const result = await res.json()
-    if (!res.ok) throw new Error(result.error || 'Error al sincronizar cotización')
+    if (!res.ok) throw new Error(result.error || 'Error al sincronizar cotizacion')
+    if (item.localEntityId) removeOfflineEntity('cotizacion', item.localEntityId).catch(() => {})
+
+    if (payload.sendAfterSave && result.id) {
+      const sendRes = await fetch(apiUrl('/api/cotizaciones/enviar'), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ cotizacionId: result.id, tasaBcv: Number(payload.tasaBcv) || 0 }),
+      })
+      const sendResult = await sendRes.json()
+      if (!sendRes.ok) throw new Error(sendResult.error || 'Error al enviar cotizacion sincronizada')
+      return { ...result, ...sendResult }
+    }
+
     return result
   }
 
-  throw new Error(`Tipo de mutación desconocido: ${item.type}`)
+  if (item.type === 'ACTUALIZAR_COTIZACION_ESTADO') {
+    const cotizacionId = mapId(item.payload.cotizacionId)
+    const { error } = await supabase
+      .from('cotizaciones')
+      .update({ estado: item.payload.estado })
+      .eq('id', cotizacionId)
+    if (error) throw new Error(error.message || 'Error al actualizar cotizacion')
+    return { id: cotizacionId }
+  }
+
+  if (item.type === 'CREAR_DESPACHO') {
+    const payload = { ...item.payload, cotizacionId: mapId(item.payload.cotizacionId) }
+    delete payload.despachoId
+    const res = await fetch(apiUrl('/api/despachos/crear'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    })
+    const result = await res.json()
+    if (!res.ok) throw new Error(result.error || 'Error al crear despacho offline')
+    if (item.localEntityId) removeOfflineEntity('despacho', item.localEntityId).catch(() => {})
+    return result
+  }
+
+  if (item.type === 'EDITAR_DESPACHO') {
+    const res = await fetch(apiUrl('/api/despachos/editar-pago'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...item.payload, despachoId: mapId(item.payload.despachoId) }),
+    })
+    const result = await res.json()
+    if (!res.ok) throw new Error(result.error || 'Error al editar despacho offline')
+    return { id: mapId(item.payload.despachoId) }
+  }
+
+  if (item.type?.startsWith('MARCAR_DESPACHO_')) {
+    const res = await fetch(apiUrl('/api/despachos/estado'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        despachoId: mapId(item.payload.despachoId),
+        nuevoEstado: item.payload.nuevoEstado,
+        motivoDevolucion: item.payload.motivoDevolucion,
+        motivoAnulacion: item.payload.motivoAnulacion,
+        tasaBcv: item.payload.tasaBcv,
+      }),
+    })
+    const result = await res.json()
+    if (!res.ok) throw new Error(result.error || 'Error al cambiar estado de despacho offline')
+    return { id: mapId(item.payload.despachoId) }
+  }
+
+  throw new Error(`Tipo de mutacion desconocido: ${item.type}`)
 }
 
-// ─── Hook principal ───────────────────────────────────────────────────────────
 export function useMutationQueue() {
   const qc = useQueryClient()
   const [pending, setPending] = useState(0)
@@ -69,14 +156,22 @@ export function useMutationQueue() {
   const [syncing, setSyncing] = useState(false)
   const processingRef = useRef(false)
 
-  // Refrescar contadores
   const refresh = useCallback(async () => {
     const [p, f] = await Promise.all([dequeuePending(), dequeueFailed()])
     setPending(p.length)
     setFailed(f)
   }, [])
 
-  // Procesar la cola (se llama al detectar 'online' o desde Background Sync)
+  const invalidateOfflineQueries = useCallback(() => {
+    qc.invalidateQueries({ queryKey: DESPACHOS_KEY })
+    qc.invalidateQueries({ queryKey: INVENTARIO_KEY })
+    qc.invalidateQueries({ queryKey: COMISIONES_KEY })
+    qc.invalidateQueries({ queryKey: COTIZACIONES_KEY })
+    qc.invalidateQueries({ queryKey: CLIENTES_KEY })
+    qc.invalidateQueries({ queryKey: STOCK_COMPROMETIDO_KEY })
+    qc.invalidateQueries({ queryKey: CXC_KEY })
+  }, [qc])
+
   const sync = useCallback(async ({ silent = false } = {}) => {
     if (processingRef.current) return
     const total = await countAll()
@@ -89,40 +184,34 @@ export function useMutationQueue() {
       const { done, failed: failedCount } = await processQueue(dispatchItem)
 
       if (done > 0) {
-        // Invalidar queries afectadas
-        qc.invalidateQueries({ queryKey: DESPACHOS_KEY })
-        qc.invalidateQueries({ queryKey: INVENTARIO_KEY })
-        qc.invalidateQueries({ queryKey: COMISIONES_KEY })
-        qc.invalidateQueries({ queryKey: COTIZACIONES_KEY })
-        qc.invalidateQueries({ queryKey: STOCK_COMPROMETIDO_KEY })
-        qc.invalidateQueries({ queryKey: CXC_KEY })
-        if (!silent) showToast(`${done} venta${done > 1 ? 's' : ''} sincronizada${done > 1 ? 's' : ''}`, 'success')
+        invalidateOfflineQueries()
+        const [pendingNow, failedNow] = await Promise.all([dequeuePending(), dequeueFailed()])
+        const hasOfflineClients = [...pendingNow, ...failedNow].some((item) => item.type === 'CREAR_CLIENTE')
+        if (!hasOfflineClients) await clearLocalClientesOffline()
+        if (!silent) showToast(`${done} registro${done > 1 ? 's' : ''} sincronizado${done > 1 ? 's' : ''}`, 'success')
       }
 
       if (failedCount > 0 && !silent) {
-        showToast(`${failedCount} venta${failedCount > 1 ? 's' : ''} no pudo${failedCount > 1 ? 'ron' : ''} sincronizarse`, 'error')
+        showToast(`${failedCount} registro${failedCount > 1 ? 's' : ''} no pudo${failedCount > 1 ? 'ron' : ''} sincronizarse`, 'error')
       }
     } finally {
       processingRef.current = false
       setSyncing(false)
       await refresh()
     }
-  }, [qc, refresh])
+  }, [invalidateOfflineQueries, refresh])
 
-  // Reintentar un item fallido
   const retry = useCallback(async (id) => {
     await retryFailed(id)
     await refresh()
     await sync()
   }, [refresh, sync])
 
-  // Descartar un item fallido
   const discard = useCallback(async (id) => {
     await discardFailed(id)
     await refresh()
   }, [refresh])
 
-  // Escuchar reconexión → procesar automáticamente
   useEffect(() => {
     refresh()
 
@@ -132,19 +221,26 @@ export function useMutationQueue() {
 
     window.addEventListener('online', handleOnline)
 
-    // Registrar Background Sync si el SW lo soporta
     if ('serviceWorker' in navigator && 'SyncManager' in window) {
       navigator.serviceWorker.ready.then((reg) => {
-        reg.sync.register('sync-mutations').catch(() => {
-          // Browser no soporta BG Sync (iOS) — el 'online' event ya cubre este caso
-        })
+        reg.sync.register('sync-mutations').catch(() => {})
       })
     }
 
-    return () => window.removeEventListener('online', handleOnline)
-  }, [refresh, sync])
+    function handleSWMessage(e) {
+      if (e.data?.type === 'MUTATION_QUEUE_SYNCED') {
+        refresh()
+        invalidateOfflineQueries()
+      }
+    }
+    navigator.serviceWorker?.addEventListener('message', handleSWMessage)
 
-  // Polling liviano (cada 10s) para mantener badge actualizado
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      navigator.serviceWorker?.removeEventListener('message', handleSWMessage)
+    }
+  }, [invalidateOfflineQueries, refresh, sync])
+
   useEffect(() => {
     const interval = setInterval(refresh, 10_000)
     return () => clearInterval(interval)

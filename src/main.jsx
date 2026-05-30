@@ -15,7 +15,8 @@ window.addEventListener('error', (e) => {
     msg.includes('Failed to fetch dynamically imported module') ||
     msg.includes('error loading dynamically imported module') ||
     (e.target && (e.target.tagName === 'SCRIPT' || e.target.tagName === 'LINK') && String(e.target.src || e.target.href).includes('/assets/'));
-  if (isChunkError) {
+  const isOffline = !navigator.onLine || localStorage.getItem('listo_offline_manual') === 'true';
+  if (isChunkError && !isOffline) {
     console.warn('Fallo de importación dinámica detectado. Recargando página...');
     window.location.reload();
   }
@@ -26,7 +27,8 @@ window.addEventListener('unhandledrejection', (e) => {
   const isChunkError = 
     msg.includes('Failed to fetch dynamically imported module') ||
     msg.includes('error loading dynamically imported module');
-  if (isChunkError) {
+  const isOffline = !navigator.onLine || localStorage.getItem('listo_offline_manual') === 'true';
+  if (isChunkError && !isOffline) {
     console.warn('Fallo de importación dinámica detectado en promesa. Recargando página...');
     window.location.reload();
   }

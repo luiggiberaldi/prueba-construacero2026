@@ -1,7 +1,15 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = 'https://oyfyuszgjwcepjpngclv.supabase.co'
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im95Znl1c3pnandjZXBqcG5nY2x2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0Mjk0NDMsImV4cCI6MjA5MTAwNTQ0M30.auhmnHCQ3a9wyv0nmhqWi1Q8iz0wavResvgsly6Gibs'
+import fs from 'fs'
+
+const envContent = fs.readFileSync('.env', 'utf-8')
+const getEnvVar = (name) => {
+  const match = envContent.match(new RegExp(`${name}=(.*)`))
+  return match ? match[1].trim() : null
+}
+
+const supabaseUrl = getEnvVar('VITE_SUPABASE_URL')
+const supabaseKey = getEnvVar('VITE_SUPABASE_ANON_KEY')
 
 const supabase = createClient(supabaseUrl, supabaseKey)
 

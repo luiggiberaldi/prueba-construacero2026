@@ -557,6 +557,18 @@ export async function handleVentaRapida(request, env) {
   }
 
   try {
+    const cliOwnerRes = await fetch(
+      `${env.SUPABASE_URL}/rest/v1/clientes?id=eq.${clienteId}&cuenta_id=eq.${user.id}&select=id,vendedor_id`,
+      { headers }
+    );
+    if (!cliOwnerRes.ok) {
+      const err = await cliOwnerRes.text();
+      return jsonError(`Error al validar cliente: ${err}`, 500, request);
+    }
+    const [clienteVenta] = await cliOwnerRes.json();
+    if (!clienteVenta) return jsonError('Cliente no encontrado', 404, request);
+    const vendedorDestinoId = clienteVenta.vendedor_id || user.operator_id;
+
     // 1. Obtener productos para verificar stock y obtener snapshots
     const validProdIds = items.map(i => i.productoId).filter(id => id && id.length === 36 && id.includes('-'));
     let stockMap = {};
@@ -606,7 +618,7 @@ export async function handleVentaRapida(request, env) {
     // 3. Create cotización in estado 'aceptada'
     const cotBody = {
       cliente_id: clienteId,
-      vendedor_id: user.operator_id,
+      vendedor_id: vendedorDestinoId,
       estado: 'aceptada',
       subtotal_usd: subtotal,
       descuento_global_pct: descPct,
@@ -661,7 +673,7 @@ export async function handleVentaRapida(request, env) {
         cotizacion_id: cot.id,
         numero: cot.numero,
         cliente_id: clienteId,
-        vendedor_id: user.operator_id,
+        vendedor_id: vendedorDestinoId,
         transportista_id: transportistaId || null,
         estado: 'pendiente',
         total_usd: totalUsd,
@@ -725,11 +737,11 @@ export async function handleVentaRapida(request, env) {
         categoria: 'COTIZACION', accion: 'VENTA_RAPIDA',
         descripcion: `Venta rápida: cotización #${cot.numero} + despacho #${despacho.numero}`,
         entidadTipo: 'nota_despacho', entidadId: despacho.id,
-        meta: { cotizacion_id: cot.id, total_usd: totalUsd, items_count: items.length }, ip,
+        meta: { cotizacion_id: cot.id, total_usd: totalUsd, items_count: items.length, vendedor_destino_id: vendedorDestinoId }, ip,
       });
     } catch {}
 
-    return json({ id: despacho.id, numero: despacho.numero, cotizacionId: cot.id }, 200, request);
+    return json({ id: despacho.id, numero: despacho.numero, cotizacionId: cot.id, vendedorId: vendedorDestinoId }, 200, request);
   } catch (e) {
     console.error('[VR] Uncaught error:', e.message, e.stack);
     return jsonError(e.message || 'Error al crear venta rápida', 500, request);

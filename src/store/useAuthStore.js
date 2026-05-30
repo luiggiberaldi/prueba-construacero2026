@@ -6,6 +6,8 @@ import { create } from 'zustand'
 import supabase from '../services/supabase/client'
 import { apiUrl } from '../services/apiBase'
 import queryClient from '../lib/queryClient'
+import { descargarSnapshotsLocales } from '../lib/offlineSnapshots'
+import { clearOfflineAuthToken, saveOfflineAuthToken } from '../lib/offlineAuthToken'
 
 // ─── Mapear mensajes de error de Supabase a español ───────────────────────────
 function traducirError(mensaje) {
@@ -26,12 +28,14 @@ async function getAccessToken() {
   const { data } = await supabase.auth.getSession()
   const token = data?.session?.access_token
   if (!token) return null
+  saveOfflineAuthToken(data.session).catch(() => {})
 
   // Verificar si el token está próximo a expirar (menos de 60s de vida)
   const exp = data.session.expires_at // epoch en segundos
   if (exp && exp - Math.floor(Date.now() / 1000) < 60) {
     try {
       const { data: refreshed } = await supabase.auth.refreshSession()
+      saveOfflineAuthToken(refreshed?.session).catch(() => {})
       return refreshed?.session?.access_token ?? token
     } catch {
       return token // usar el que hay si falla el refresh
@@ -51,14 +55,28 @@ function getStorageKeys(userId) {
 
 const CACHE_MAX_AGE_PERFIL = 1000 * 60 * 60 * 24 // 24h
 const CACHE_MAX_AGE_OPERATORS = 1000 * 60 * 60 * 24 * 7 // 7 días
+const ACTIVE_OPERATOR_KEY = 'listo_active_operator_id'
+const ACTIVE_ACCOUNT_KEY = 'listo_active_account_id'
+
+function guardarScopeOperadorActivo(perfil, userId) {
+  if (perfil?.id && userId) {
+    localStorage.setItem(ACTIVE_OPERATOR_KEY, perfil.id)
+    localStorage.setItem(ACTIVE_ACCOUNT_KEY, userId)
+  } else {
+    localStorage.removeItem(ACTIVE_OPERATOR_KEY)
+    localStorage.removeItem(ACTIVE_ACCOUNT_KEY)
+  }
+}
 
 function guardarPerfilCache(perfil, userId) {
   try {
     const { perfilKey } = getStorageKeys(userId)
     if (perfil) {
       localStorage.setItem(perfilKey, JSON.stringify({ ...perfil, _cachedAt: Date.now() }))
+      guardarScopeOperadorActivo(perfil, userId)
     } else {
       localStorage.removeItem(perfilKey)
+      guardarScopeOperadorActivo(null, userId)
     }
   } catch { /* ignorar */ }
 }
@@ -101,6 +119,127 @@ function leerOperadoresCache(userId) {
   } catch { return null }
 }
 
+// ─── Fallback en JS Puro para PBKDF2-SHA256 (cuando crypto.subtle no está disponible en HTTP) ───
+function sha256Fallback(bytes) {
+  function rightRotate(value, amount) {
+    return (value >>> amount) | (value << (32 - amount));
+  }
+  let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a,
+      h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
+  const k = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+  ];
+  const asciiBitLength = bytes.length * 8;
+  const padLength = (64 - ((bytes.length + 1 + 8) % 64)) % 64;
+  const msgBytes = new Uint8Array(bytes.length + 1 + padLength + 8);
+  msgBytes.set(bytes);
+  msgBytes[bytes.length] = 0x80;
+  const view = new DataView(msgBytes.buffer);
+  view.setUint32(msgBytes.length - 4, asciiBitLength);
+  const words = new Uint32Array(64);
+  for (let i = 0; i < msgBytes.length; i += 64) {
+    for (let j = 0; j < 16; j++) {
+      words[j] = view.getUint32(i + j * 4);
+    }
+    for (let j = 16; j < 64; j++) {
+      const w15 = words[j - 15];
+      const s0 = rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3);
+      const w2 = words[j - 2];
+      const s1 = rightRotate(w2, 17) ^ rightRotate(w2, 19) ^ (w2 >>> 10);
+      words[j] = (words[j - 16] + s0 + words[j - 7] + s1) | 0;
+    }
+    let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
+    for (let j = 0; j < 64; j++) {
+      const S1 = rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25);
+      const ch = (e & f) ^ (~e & g);
+      const temp1 = (h + S1 + ch + k[j] + words[j]) | 0;
+      const S0 = rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const temp2 = (S0 + maj) | 0;
+      h = g; g = f; f = e; e = (d + temp1) | 0; d = c; c = b; b = a; a = (temp1 + temp2) | 0;
+    }
+    h0 = (h0 + a) | 0;
+    h1 = (h1 + b) | 0;
+    h2 = (h2 + c) | 0;
+    h3 = (h3 + d) | 0;
+    h4 = (h4 + e) | 0;
+    h5 = (h5 + f) | 0;
+    h6 = (h6 + g) | 0;
+    h7 = (h7 + h) | 0;
+  }
+  const out = new Uint8Array(32);
+  const outView = new DataView(out.buffer);
+  outView.setUint32(0, h0);
+  outView.setUint32(4, h1);
+  outView.setUint32(8, h2);
+  outView.setUint32(12, h3);
+  outView.setUint32(16, h4);
+  outView.setUint32(20, h5);
+  outView.setUint32(24, h6);
+  outView.setUint32(28, h7);
+  return out;
+}
+
+function hmacSha255Fallback(key, message) {
+  const enc = new TextEncoder();
+  let keyBytes = typeof key === 'string' ? enc.encode(key) : key;
+  let messageBytes = typeof message === 'string' ? enc.encode(message) : message;
+  if (keyBytes.length > 64) {
+    keyBytes = sha256Fallback(keyBytes);
+  }
+  const paddedKey = new Uint8Array(64);
+  paddedKey.set(keyBytes);
+  const oKeyPad = new Uint8Array(64);
+  const iKeyPad = new Uint8Array(64);
+  for (let i = 0; i < 64; i++) {
+    oKeyPad[i] = paddedKey[i] ^ 0x5c;
+    iKeyPad[i] = paddedKey[i] ^ 0x36;
+  }
+  const innerMsg = new Uint8Array(64 + messageBytes.length);
+  innerMsg.set(iKeyPad);
+  innerMsg.set(messageBytes, 64);
+  const innerHash = sha256Fallback(innerMsg);
+  const outerMsg = new Uint8Array(64 + 32);
+  outerMsg.set(oKeyPad);
+  outerMsg.set(innerHash, 64);
+  return sha256Fallback(outerMsg);
+}
+
+function pbkdf2Sha256Fallback(password, salt, iterations, keyLen) {
+  const enc = new TextEncoder();
+  const passwordBytes = typeof password === 'string' ? enc.encode(password) : password;
+  const saltBytes = typeof salt === 'string' ? enc.encode(salt) : salt;
+  const result = new Uint8Array(keyLen);
+  let offset = 0;
+  let blockNum = 1;
+  while (offset < keyLen) {
+    const blockSalt = new Uint8Array(saltBytes.length + 4);
+    blockSalt.set(saltBytes);
+    const view = new DataView(blockSalt.buffer);
+    view.setUint32(saltBytes.length, blockNum, false);
+    let u = hmacSha255Fallback(passwordBytes, blockSalt);
+    const t = new Uint8Array(u);
+    for (let i = 1; i < iterations; i++) {
+      u = hmacSha255Fallback(passwordBytes, u);
+      for (let j = 0; j < t.length; j++) {
+        t[j] ^= u[j];
+      }
+    }
+    const chunkLen = Math.min(t.length, keyLen - offset);
+    result.set(t.subarray(0, chunkLen), offset);
+    offset += chunkLen;
+    blockNum++;
+  }
+  return Array.from(result).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 // ─── Validación local de PIN con PBKDF2 (mismo algoritmo que el worker) ────────
 // Usa WebCrypto API del browser — mismos parámetros: 10k iter, SHA-256, 256 bits
 async function hashPinPBKDF2(pin, salt) {
@@ -117,9 +256,21 @@ async function hashPinPBKDF2(pin, salt) {
 
 async function verifyPinLocal(pin, storedHash, storedSalt) {
   try {
-    const hash = await hashPinPBKDF2(pin, storedSalt)
-    return hash === storedHash
-  } catch { return false }
+    console.log('[AUTH] Iniciando verificación local de PIN...')
+    let hash;
+    if (crypto?.subtle) {
+      hash = await hashPinPBKDF2(pin, storedSalt)
+    } else {
+      console.warn('[AUTH] WARNING: crypto.subtle no está disponible. Usando fallback de PBKDF2 en JS puro.')
+      hash = pbkdf2Sha256Fallback(pin, storedSalt, 10_000, 32)
+    }
+    const matched = hash === storedHash
+    console.log('[AUTH] Verificación de PIN completada:', { matched, pinLength: pin.length })
+    return matched
+  } catch (err) {
+    console.error('[AUTH] Error en verificación de PIN local:', err)
+    return false
+  }
 }
 
 // ─── Descargar y cachear operadores en background ────────────────────────────
@@ -145,7 +296,9 @@ const useAuthStore = create((set, get) => ({
   loading: false,
   error: null,
   initialized: false,  // true una vez que se verificó la sesión inicial
-  offline: !navigator.onLine, // estado de conectividad
+  offlineManual: localStorage.getItem('listo_offline_manual') === 'true',
+  offlineFisico: !navigator.onLine,
+  offline: localStorage.getItem('listo_offline_manual') === 'true' || !navigator.onLine,
   _cargandoPerfil: false,
   _logoutManual: false,
   _refreshingToken: false, // guard para evitar múltiples refreshSession concurrentes
@@ -174,9 +327,14 @@ const useAuthStore = create((set, get) => ({
       }
     } catch { /* ignorar */ }
 
+    const manualOffline = localStorage.getItem('listo_offline_manual') === 'true'
     const estaOffline = !navigator.onLine
     const perfilCacheado = leerPerfilCache(currentUserId)
-    set({ offline: estaOffline })
+    set({
+      offlineFisico: estaOffline,
+      offlineManual: manualOffline,
+      offline: manualOffline || estaOffline
+    })
 
     if (estaOffline && perfilCacheado) {
       console.log('[AUTH] offline detectado con perfil cacheado — modo sin conexión activado')
@@ -187,14 +345,20 @@ const useAuthStore = create((set, get) => ({
 
     // Listeners de conectividad
     const handleOnline = () => {
-      console.log('[AUTH] conexión restaurada — refrescando datos')
-      set({ offline: false, error: null })
-      // Invalidar todas las queries para que se refresquen con datos frescos
-      queryClient.invalidateQueries()
+      console.log('[AUTH] conexión física restaurada')
+      set({ offlineFisico: false })
+      const manual = get().offlineManual
+      set({ offline: manual })
+      if (!manual) {
+        set({ error: null })
+        queryClient.invalidateQueries()
+        const p = get().perfil
+        if (p) descargarSnapshotsLocales(p).catch(() => {})
+      }
     }
     const handleOffline = () => {
-      console.log('[AUTH] conexión perdida')
-      set({ offline: true })
+      console.log('[AUTH] conexión física perdida')
+      set({ offlineFisico: true, offline: true })
     }
     window.addEventListener('online', handleOnline)
     window.addEventListener('offline', handleOffline)
@@ -225,6 +389,7 @@ const useAuthStore = create((set, get) => ({
         if (event === 'INITIAL_SESSION') {
           try {
             if (session?.user) {
+              saveOfflineAuthToken(session).catch(() => {})
               console.log('[AUTH] INITIAL_SESSION con user, seteando user...')
               // Si estamos offline y hay perfil cacheado válido, restaurarlo
               // El usuario ya se autentricó con PIN antes — puede continuar offline
@@ -232,10 +397,14 @@ const useAuthStore = create((set, get) => ({
               const cached = leerPerfilCache(session.user.id)
               if (offline && cached) {
                 console.log('[AUTH] modo offline: restaurando perfil cacheado —', cached.nombre, '/', cached.rol)
+                guardarPerfilCache(cached, session.user.id)
                 set({ user: session.user, perfil: cached, _cargandoPerfil: false })
               } else {
                 // Online: solo setear user, NO cargar perfil automáticamente (requiere PIN)
                 set({ user: session.user, _cargandoPerfil: false })
+                getAccessToken()
+                  .then(token => { if (token) fetchAndCacheOperators(token, session.user.id) })
+                  .catch(() => {})
               }
             } else {
               console.log('[AUTH] INITIAL_SESSION sin user (no hay sesión)')
@@ -251,10 +420,18 @@ const useAuthStore = create((set, get) => ({
         }
 
         if (event === 'SIGNED_IN' && session?.user) {
+          saveOfflineAuthToken(session).catch(() => {})
           // Solo actualizar user si cambió (evitar re-renders innecesarios)
           const currentUser = get().user
           if (!currentUser || currentUser.id !== session.user.id) {
             set({ user: session.user })
+          }
+          if (!navigator.onLine) {
+            // Offline: no fetch
+          } else {
+            getAccessToken()
+              .then(token => { if (token) fetchAndCacheOperators(token, session.user.id) })
+              .catch(() => {})
           }
           // SEGURIDAD: NO cargar perfil automáticamente desde metadata.
           // El perfil solo se establece a través de switchOperator() (PIN).
@@ -271,6 +448,7 @@ const useAuthStore = create((set, get) => ({
           }
           const wasLoggedIn = get().user !== null && !esManual
           const userId = get().user?.id
+          clearOfflineAuthToken().catch(() => {})
           guardarPerfilCache(null, userId)
           set({ user: null, perfil: null, error: null, _logoutManual: false })
           if (wasLoggedIn) {
@@ -279,6 +457,7 @@ const useAuthStore = create((set, get) => ({
         }
 
         if (event === 'TOKEN_REFRESHED' && session?.user) {
+          saveOfflineAuthToken(session).catch(() => {})
           // Solo actualizar user si realmente cambió (evitar re-renders innecesarios)
           const currentUser = get().user
           if (!currentUser || currentUser.id !== session.user.id || currentUser.email !== session.user.email) {
@@ -296,6 +475,20 @@ const useAuthStore = create((set, get) => ({
       window.removeEventListener('online', handleOnline)
       window.removeEventListener('offline', handleOffline)
       subscription.unsubscribe()
+    }
+  },
+
+  // Acción para conmutar offline manual
+  setOfflineManual: (val) => {
+    localStorage.setItem('listo_offline_manual', String(val))
+    const fisico = get().offlineFisico
+    set({ offlineManual: val, offline: val || fisico })
+
+    if (!val && !fisico) {
+      set({ error: null })
+      queryClient.invalidateQueries()
+      const p = get().perfil
+      if (p) descargarSnapshotsLocales(p).catch(() => {})
     }
   },
 
@@ -445,6 +638,9 @@ const useAuthStore = create((set, get) => ({
     }
 
     try {
+      if (get().offline) {
+        throw new TypeError('Offline')
+      }
       let token = await getAccessToken()
       if (!token) {
         set({ loading: false, error: 'No hay sesión activa. Inicia sesión primero.' })
@@ -462,6 +658,7 @@ const useAuthStore = create((set, get) => ({
           const { data: refreshData } = await supabase.auth.refreshSession()
           const freshToken = refreshData?.session?.access_token
           if (freshToken) {
+            saveOfflineAuthToken(refreshData.session).catch(() => {})
             set({ user: refreshData.user })
             res = await callWorker(freshToken)
             result = await res.json()
@@ -516,6 +713,14 @@ const useAuthStore = create((set, get) => ({
         }
         guardarPerfilCache(perfilOp, get().user?.id)
         set({ perfil: perfilOp, loading: false, error: null })
+        // Descargar snapshots locales al cambiar operador exitosamente (background)
+        descargarSnapshotsLocales(perfilOp).catch(() => {})
+
+        // Refrescar operadores cache
+        const userId = get().user?.id
+        if (userId) {
+          fetchAndCacheOperators(token, userId).catch(() => {})
+        }
       }
 
       // Refrescar JWT en background — no bloquear al usuario
@@ -534,6 +739,14 @@ const useAuthStore = create((set, get) => ({
       const userId = get().user?.id
       const operators = leerOperadoresCache(userId)
       const op = operators?.find(o => o.id === operatorId)
+
+      console.log('[AUTH] Validando PIN offline:', {
+        userId,
+        operatorsCount: operators?.length || 0,
+        opEncontrado: !!op,
+        tieneHash: !!op?.pin_hash,
+        tieneSalt: !!op?.pin_salt
+      })
 
       if (op && op.pin_hash && op.pin_salt) {
         const pinValido = await verifyPinLocal(pin, op.pin_hash, op.pin_salt)
@@ -623,6 +836,7 @@ const useAuthStore = create((set, get) => ({
     set({ _logoutManual: true })
     const userId = get().user?.id
     await supabase.auth.signOut()
+    clearOfflineAuthToken().catch(() => {})
     guardarPerfilCache(null, userId)
     set({ user: null, perfil: null, error: null, _logoutManual: false })
   },

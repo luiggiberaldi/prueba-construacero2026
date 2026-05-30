@@ -26,6 +26,7 @@ import { usePushNotifications } from '../../hooks/usePushNotifications'
 import { showToast } from '../ui/Toast'
 import { NOTIF_TYPES, setNotificationUserId, startRealtimeNotifications, stopRealtimeNotifications } from '../../services/notificationService'
 import PendingQueueBadge from '../ui/PendingQueueBadge'
+import { useOffline } from '../ui/OfflineBanner'
 
 // ─── Formato de tiempo relativo para notificaciones ─────────────────────────
 function formatNotifTime(ts) {
@@ -272,16 +273,28 @@ export default function AppLayout() {
     navigate('/login', { replace: true })
   }
 
+  const bannerVisible = useOffline()
+
   function cerrarMenu() { setMenuOpen(false) }
   // En móvil el drawer siempre muestra labels completos
   const collapsed = sidebarCollapsed && !menuOpen
 
   return (
-    <div className="flex h-screen pt-12 md:pt-14 overflow-hidden" style={{ background: '#f1f5f9' }}>
+    <div className="flex pt-12 md:pt-14 overflow-hidden"
+      style={{
+        background: '#f1f5f9',
+        height: bannerVisible ? 'calc(100vh - 46px)' : '100vh',
+        transition: 'height 350ms cubic-bezier(0.4, 0, 0.2, 1)'
+      }}>
 
       {/* ── Barra superior (móvil + desktop) ────────────────────────────── */}
-      <div className="fixed top-0 left-0 right-0 z-40 px-3 md:px-4 h-12 md:h-14 flex items-center justify-between gap-2 md:gap-4"
-        style={{ background: 'linear-gradient(135deg, #0a1628 0%, #0d1f3c 100%)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+      <div className="fixed left-0 right-0 z-40 px-3 md:px-4 h-12 md:h-14 flex items-center justify-between gap-2 md:gap-4"
+        style={{
+          top: bannerVisible ? '46px' : '0px',
+          background: 'linear-gradient(135deg, #0a1628 0%, #0d1f3c 100%)',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          transition: 'top 350ms cubic-bezier(0.4, 0, 0.2, 1)'
+        }}>
 
         {/* Hamburger — solo móvil */}
         <button
@@ -473,12 +486,14 @@ export default function AppLayout() {
       <div className={`relative shrink-0 transition-all duration-300 ease-out ${sidebarCollapsed ? 'md:w-[72px]' : 'md:w-64'}`}>
       <aside
         className={`
+          app-sidebar
+          ${bannerVisible ? 'banner-visible' : ''}
           fixed left-0 z-[200] flex flex-col shrink-0
           transition-all duration-300 ease-out
           ${menuOpen ? 'translate-x-0' : '-translate-x-full'}
           ${sidebarCollapsed ? 'md:w-[72px]' : 'md:w-64'}
-          w-[85%] max-w-xs top-0 rounded-br-2xl rounded-tr-2xl
-          md:w-64 md:inset-y-0 md:rounded-none md:translate-x-0 md:static md:z-auto md:h-[calc(100vh-3.5rem)] md:sticky md:top-14
+          w-[85%] max-w-xs rounded-br-2xl rounded-tr-2xl
+          md:w-64 md:inset-y-0 md:rounded-none md:translate-x-0 md:static md:z-auto md:sticky
           overflow-hidden
         `}
         style={{
@@ -728,6 +743,28 @@ export default function AppLayout() {
         onClose={() => setShowPushTrouble(false)}
         rawError={pushTroubleRawMsg}
       />
+
+      <style>{`
+        .app-sidebar {
+          top: 0;
+          height: 100vh;
+          transition: top 350ms cubic-bezier(0.4, 0, 0.2, 1), height 350ms cubic-bezier(0.4, 0, 0.2, 1), transform 300ms ease-out;
+        }
+        .app-sidebar.banner-visible {
+          top: 46px;
+          height: calc(100vh - 46px);
+        }
+        @media (min-width: 768px) {
+          .app-sidebar {
+            top: 3.5rem;
+            height: calc(100vh - 3.5rem);
+          }
+          .app-sidebar.banner-visible {
+            top: calc(3.5rem + 46px);
+            height: calc(100vh - 3.5rem - 46px);
+          }
+        }
+      `}</style>
 
     </div>
   )
