@@ -1816,7 +1816,7 @@ CREATE OR REPLACE FUNCTION "public"."factory_reset_operacional"("p_cuenta_id" "u
     AS $$
 BEGIN
   -- Orden seguro respetando FK constraints. SOLO BORRA PARA TU CUENTA.
-  DELETE FROM comisiones WHERE cuenta_id = p_cuenta_id;
+  DELETE FROM comisiones WHERE cuentaid = p_cuenta_id;
   DELETE FROM cuentas_por_cobrar WHERE cuenta_id = p_cuenta_id;
   DELETE FROM notas_despacho_items WHERE cuenta_id = p_cuenta_id;
   DELETE FROM notas_despacho WHERE cuenta_id = p_cuenta_id;

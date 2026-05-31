@@ -32,8 +32,8 @@ async function dispatchItem(item, idMap = {}) {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${session.access_token}`,
   }
-  const operadorActivoId = useAuthStore.getState().perfil?.id
-  if (operadorActivoId) headers['X-Operator-Id'] = operadorActivoId
+  const operatorId = item.operatorId || useAuthStore.getState().perfil?.id
+  if (operatorId) headers['X-Operator-Id'] = operatorId
   const mapId = (id) => idMap[id] || id
 
   if (item.type === 'VENTA_RAPIDA' || item.type === 'GUARDAR_COTIZACION') {

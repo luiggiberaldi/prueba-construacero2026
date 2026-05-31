@@ -32,6 +32,8 @@ export async function enqueue(type, payload, meta = {}) {
     )
   }
 
+  const activeOperatorId = meta.operatorId || (typeof localStorage !== 'undefined' ? localStorage.getItem('listo_active_operator_id') : null);
+
   if (existingItem) {
     const updatedItem = {
       ...existingItem,
@@ -41,6 +43,7 @@ export async function enqueue(type, payload, meta = {}) {
       error: null,
       attempts: 0,
       status: 'pending',
+      operatorId: activeOperatorId || existingItem.operatorId || null,
     }
     await set(existingItem.id, updatedItem)
     return existingItem.id
@@ -60,6 +63,7 @@ export async function enqueue(type, payload, meta = {}) {
     localEntityId: meta.localEntityId || null,
     entity: meta.entity || null,
     operationLabel: meta.operationLabel || null,
+    operatorId: activeOperatorId || null,
   }
   await set(id, item)
   return id
@@ -145,7 +149,10 @@ export async function processQueue(dispatch) {
   while (remaining.length > 0) {
     const index = remaining.findIndex((item) => {
       const deps = item.dependsOn || []
-      return deps.every((dep) => idMap[dep] || !String(dep).startsWith('local_'))
+      return deps.every((dep) => {
+        const isLocal = String(dep).startsWith('local_') || String(dep).startsWith('mq_')
+        return idMap[dep] || !isLocal
+      })
     })
 
     if (index === -1) {

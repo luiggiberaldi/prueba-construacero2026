@@ -15,8 +15,7 @@ self.addEventListener('activate', (event) => {
   // Limpiar caches viejos (de versiones anteriores del SW) al activar
   event.waitUntil(self.clients.claim())
 })
-
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // Background Sync — procesa cola de mutaciones offline al recuperar conexión
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -47,6 +46,15 @@ async function processMutationQueueInSW() {
         continue
       }
 
+      // Headers base dinámicos con soporte de operador offline
+      const requestHeaders = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      }
+      if (item.operatorId) {
+        requestHeaders['X-Operator-Id'] = item.operatorId
+      }
+
       // 1. Mapeo relacional de IDs temporales de clientes
       if (item.type === 'VENTA_RAPIDA' || item.type === 'GUARDAR_COTIZACION') {
         const tempClient = item.payload.clienteId || item.payload.headerData?.cliente_id
@@ -65,10 +73,7 @@ async function processMutationQueueInSW() {
       if (item.type === 'CREAR_CLIENTE') {
         const res = await fetch('/api/clientes/crear', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-          },
+          headers: requestHeaders,
           body: JSON.stringify(item.payload),
         })
 
@@ -94,8 +99,7 @@ async function processMutationQueueInSW() {
         const res = await fetch(`/rest/v1/cotizaciones?id=eq.${cotizacionId}`, {
           method: 'PATCH',
           headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
+            ...requestHeaders,
             apikey: accessToken,
             Prefer: 'return=minimal',
           },
@@ -114,10 +118,7 @@ async function processMutationQueueInSW() {
         delete payload.despachoId
         const res = await fetch('/api/despachos/crear', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-          },
+          headers: requestHeaders,
           body: JSON.stringify(payload),
         })
         if (!res.ok) {
@@ -136,10 +137,7 @@ async function processMutationQueueInSW() {
       if (item.type === 'EDITAR_DESPACHO') {
         const res = await fetch('/api/despachos/editar-pago', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-          },
+          headers: requestHeaders,
           body: JSON.stringify({
             ...item.payload,
             despachoId: idMap[item.payload.despachoId] || item.payload.despachoId,
@@ -156,10 +154,7 @@ async function processMutationQueueInSW() {
       if (item.type?.startsWith('MARCAR_DESPACHO_')) {
         const res = await fetch('/api/despachos/estado', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-          },
+          headers: requestHeaders,
           body: JSON.stringify({
             despachoId: idMap[item.payload.despachoId] || item.payload.despachoId,
             nuevoEstado: item.payload.nuevoEstado,
@@ -179,16 +174,24 @@ async function processMutationQueueInSW() {
       if (item.type === 'VENTA_RAPIDA') {
         const res = await fetch('/api/ventas-rapidas/crear', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-          },
+          headers: requestHeaders,
           body: JSON.stringify(item.payload),
         })
 
         if (!res.ok) {
           const data = await res.json().catch(() => ({}))
           throw new Error(data.error || `HTTP ${res.status}`)
+        }
+
+        const result = await res.json().catch(() => ({}))
+        if (result?.id) {
+          idMap[item.id] = result.id
+          // Reemplazar ID temporal en las mutaciones siguientes que dependan de esta
+          for (const other of items) {
+            if (other.payload && other.payload.despachoId === item.id) {
+              other.payload.despachoId = result.id
+            }
+          }
         }
 
         await del(item.id)
@@ -201,10 +204,7 @@ async function processMutationQueueInSW() {
 
         const res = await fetch('/api/cotizaciones/guardar', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-          },
+          headers: requestHeaders,
           body: JSON.stringify(payload),
         })
 
@@ -222,14 +222,8 @@ async function processMutationQueueInSW() {
         if (payload.sendAfterSave && result.id) {
           const sendRes = await fetch('/api/cotizaciones/enviar', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${accessToken}`,
-            },
-            body: JSON.stringify({
-              cotizacionId: result.id,
-              tasaBcv: Number(payload.tasaBcv) || 0
-            }),
+            headers: requestHeaders,
+            body: JSON.stringify({ cotizacionId: result.id, tasaBcv: Number(payload.tasaBcv) || 0 }),
           })
           if (!sendRes.ok) {
             const sendData = await sendRes.json().catch(() => ({}))

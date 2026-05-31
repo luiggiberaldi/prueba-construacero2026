@@ -811,6 +811,13 @@ export default function UsuariosView() {
     if (!confirmCambio) return
     try {
       await cambiarActivo.mutateAsync({ id: confirmCambio.usuario.id, activo: confirmCambio.activo })
+      import('../components/ui/Toast').then(({ showToast }) =>
+        showToast(`Usuario "${confirmCambio.usuario.nombre}" ${confirmCambio.activo ? 'activado' : 'desactivado'} con éxito`, 'success')
+      )
+    } catch (err) {
+      import('../components/ui/Toast').then(({ showToast }) =>
+        showToast(err.message || 'Error al cambiar estado del usuario', 'error')
+      )
     } finally {
       setConfirmCambio(null)
     }
@@ -820,6 +827,13 @@ export default function UsuariosView() {
     if (!confirmBorrar) return
     try {
       await eliminar.mutateAsync({ id: confirmBorrar.id })
+      import('../components/ui/Toast').then(({ showToast }) =>
+        showToast(`Usuario "${confirmBorrar.nombre}" eliminado con éxito`, 'success')
+      )
+    } catch (err) {
+      import('../components/ui/Toast').then(({ showToast }) =>
+        showToast(err.message || 'Error al eliminar usuario', 'error')
+      )
     } finally {
       setConfirmBorrar(null)
     }

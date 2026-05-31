@@ -60,6 +60,51 @@ function normalizeQueuedDespachoItems(items = []) {
   })
 }
 
+function reconstructDespachoFromVentaRapida(m, perfil) {
+  const payload = m.payload
+  const queuedItems = normalizeQueuedDespachoItems(payload.items)
+  const vendedorId = payload.vendedorId || perfil?.id
+  const vendedor = vendedorId
+    ? { id: vendedorId, nombre: payload.vendedorNombre || (vendedorId === perfil?.id ? perfil?.nombre : null) || 'Vendedor' }
+    : null
+  const cliente = payload.clienteId
+    ? { id: payload.clienteId, nombre: payload.clienteNombre || 'Cliente' }
+    : null
+  return {
+    id: m.id, // mutation queue id as temporary id
+    numero: 'PENDIENTE',
+    cotizacion_id: null,
+    estado: 'pendiente',
+    tiene_prestamos: queuedItems.some(it => it.es_prestamo),
+    total_usd: (queuedItems.reduce((s, it) => s + (it.es_prestamo ? 0 : it.total_linea_usd), 0) || 0) + (payload.fleteUsd || 0) + (payload.corteUsd || 0),
+    flete_usd: payload.fleteUsd || 0,
+    corte_usd: payload.corteUsd || 0,
+    descuento_total_usd: 0,
+    notas: payload.notas || null,
+    forma_pago: payload.formaPago || null,
+    forma_pago_cliente: payload.formaPagoCliente || payload.formaPago || null,
+    referencia_pago: payload.referenciaPago || null,
+    creado_en: new Date(m.createdAt).toISOString(),
+    actualizado_en: new Date(m.createdAt).toISOString(),
+    despachada_en: null,
+    entregada_en: null,
+    aprobado_por_nombre: null,
+    cliente_id: payload.clienteId,
+    cliente_factura_id: payload.clienteId,
+    vendedor_id: vendedorId,
+    transportista_id: payload.transportistaId || null,
+    items_count: queuedItems.length,
+    items: queuedItems,
+    transportista: null,
+    cotizacion: null,
+    seguimiento: null,
+    cliente,
+    cliente_factura: cliente,
+    vendedor,
+    _queued: true
+  }
+}
+
 // ─── Lista de despachos ─────────────────────────────────────────────────────
 export function useDespachos({ estado = '', veTodos: veTodosParam = false, busqueda = '', esHoy = false } = {}) {
   const perfil = useAuthStore(useCallback(s => s.perfil, []))
@@ -89,50 +134,7 @@ export function useDespachos({ estado = '', veTodos: veTodosParam = false, busqu
         // Filter and map VENTA_RAPIDA mutations
         const localQuickSales = pendingMutations
           .filter(m => m.type === 'VENTA_RAPIDA')
-          .map(m => {
-            const payload = m.payload
-            const queuedItems = normalizeQueuedDespachoItems(payload.items)
-            const vendedorId = payload.vendedorId || perfil?.id
-            const vendedor = vendedorId
-              ? { id: vendedorId, nombre: payload.vendedorNombre || (vendedorId === perfil?.id ? perfil?.nombre : null) || 'Vendedor' }
-              : null
-            const cliente = payload.clienteId
-              ? { id: payload.clienteId, nombre: payload.clienteNombre || 'Cliente' }
-              : null
-            return {
-              id: m.id, // mutation queue id as temporary id
-              numero: 'PENDIENTE',
-              cotizacion_id: null,
-              estado: 'pendiente',
-              tiene_prestamos: queuedItems.some(it => it.es_prestamo),
-              total_usd: (queuedItems.reduce((s, it) => s + (it.es_prestamo ? 0 : it.total_linea_usd), 0) || 0) + (payload.fleteUsd || 0) + (payload.corteUsd || 0),
-              flete_usd: payload.fleteUsd || 0,
-              corte_usd: payload.corteUsd || 0,
-              descuento_total_usd: 0,
-              notas: payload.notas || null,
-              forma_pago: payload.formaPago || null,
-              forma_pago_cliente: payload.formaPagoCliente || payload.formaPago || null,
-              referencia_pago: payload.referenciaPago || null,
-              creado_en: new Date(m.createdAt).toISOString(),
-              actualizado_en: new Date(m.createdAt).toISOString(),
-              despachada_en: null,
-              entregada_en: null,
-              aprobado_por_nombre: null,
-              cliente_id: payload.clienteId,
-              cliente_factura_id: payload.clienteId,
-              vendedor_id: vendedorId,
-              transportista_id: payload.transportistaId || null,
-              items_count: queuedItems.length,
-              items: queuedItems,
-              transportista: null,
-              cotizacion: null,
-              seguimiento: null,
-              cliente,
-              cliente_factura: cliente,
-              vendedor,
-              _queued: true
-            }
-          })
+          .map(m => reconstructDespachoFromVentaRapida(m, perfil))
 
         const materialized = localDespachoEntities.map(normalizeLocalDespacho)
         const seenLocal = new Set(materialized.map(d => d.id))
@@ -550,7 +552,7 @@ export function useActualizarEstadoDespacho() {
   return useMutation({
     mutationFn: async ({ despachoId, nuevoEstado, numeroCotizacion, clienteNombre, vendedorId = null, motivoDevolucion = null, motivoAnulacion = null, tasaBcv = null }) => {
       const offline = useAuthStore.getState().offline
-      if (offline || String(despachoId).startsWith('local_')) {
+      if (offline || String(despachoId).startsWith('local_') || String(despachoId).startsWith('mq_')) {
         assertCanQueueEstadoDespacho({ perfil, nuevoEstado, vendedorId })
         const nowIso = new Date().toISOString()
         const patch = {
@@ -561,9 +563,22 @@ export function useActualizarEstadoDespacho() {
         }
         const currentLocal = await getOfflineEntity('despacho', despachoId)
         const snapshotDespacho = (await getLocalDespachos()).find(d => d.id === despachoId)
-        const baseDespacho = currentLocal?.data?.id
+        let baseDespacho = currentLocal?.data?.id
           ? currentLocal.data
-          : (snapshotDespacho || { id: despachoId, vendedor_id: vendedorId })
+          : snapshotDespacho
+
+        if (!baseDespacho && String(despachoId).startsWith('mq_')) {
+          const pending = await dequeuePending()
+          const matchingVr = pending.find(m => m.id === despachoId && m.type === 'VENTA_RAPIDA')
+          if (matchingVr) {
+            baseDespacho = reconstructDespachoFromVentaRapida(matchingVr, perfil)
+          }
+        }
+
+        if (!baseDespacho) {
+          baseDespacho = { id: despachoId, vendedor_id: vendedorId }
+        }
+
         await saveOfflineEntity('despacho', despachoId, { ...baseDespacho, ...patch })
         await enqueue(`MARCAR_DESPACHO_${String(nuevoEstado).toUpperCase()}`, {
           despachoId,
@@ -574,7 +589,7 @@ export function useActualizarEstadoDespacho() {
         }, {
           entity: 'despacho',
           localEntityId: despachoId,
-          dependsOn: String(despachoId).startsWith('local_') ? [despachoId] : [],
+          dependsOn: (String(despachoId).startsWith('local_') || String(despachoId).startsWith('mq_')) ? [despachoId] : [],
           operationLabel: `Marcar despacho como ${ESTADO_LABELS[nuevoEstado] || nuevoEstado}`,
         })
         return { nuevoEstado, numeroCotizacion, clienteNombre, vendedorId, _queued: true }
