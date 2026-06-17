@@ -25,7 +25,7 @@ import { apiUrl } from '../services/apiBase'
 
 const ROL_CONFIG = {
   supervisor: {
-    label:  'Jefe de ventas',
+    label:  'Supervisor',
     bg:     'bg-blue-50',
     text:   'text-blue-700',
     border: 'border-blue-200',

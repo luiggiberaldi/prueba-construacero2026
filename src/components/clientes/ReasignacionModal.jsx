@@ -73,7 +73,7 @@ export default function ReasignacionModal({ cliente, isOpen, onClose }) {
                 options={opcionesVendedor.map(v => ({
                   value: v.id,
                   label: v.nombre,
-                  sub: v.rol === 'supervisor' ? 'Jefe de ventas' : 'Vendedor',
+                  sub: v.rol === 'supervisor' ? 'Supervisor' : 'Vendedor',
                 }))}
                 value={nuevoVendedorId}
                 onChange={val => { setNuevoVendedorId(val); setError('') }}
