@@ -820,6 +820,8 @@ export default function UsuariosView() {
     if (!confirmBorrar) return
     try {
       await eliminar.mutateAsync({ id: confirmBorrar.id })
+    } catch (err) {
+      alert(err.message || 'Error al eliminar el usuario')
     } finally {
       setConfirmBorrar(null)
     }

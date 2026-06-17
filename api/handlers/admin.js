@@ -186,7 +186,19 @@ export async function handleAdmin(request, env, url) {
       }
     );
 
-    if (!dbRes.ok) return jsonError('Error al eliminar usuario', 500, request);
+    if (!dbRes.ok) {
+      let errData = null;
+      try {
+        errData = await dbRes.json();
+      } catch (e) {}
+      
+      if (errData && errData.code === '23503') {
+        return jsonError('No se puede eliminar permanentemente este usuario porque tiene transacciones registradas (clientes, cotizaciones, despachos, etc.). En su lugar, marque al usuario como inactivo.', 409, request);
+      }
+      
+      const errMsg = errData?.message || 'Error al eliminar usuario';
+      return jsonError(errMsg, 500, request);
+    }
 
     // Auditoría
     try {
