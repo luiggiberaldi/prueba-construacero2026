@@ -30,4 +30,13 @@ jobs:
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          command: deploy
+          command: >-
+            deploy
+            --var SUPABASE_SERVICE_KEY:"${{ secrets.SUPABASE_SERVICE_KEY }}"
+            --var VAPID_PUBLIC_KEY:"${{ secrets.VAPID_PUBLIC_KEY }}"
+            --var VAPID_PRIVATE_KEY:"${{ secrets.VAPID_PRIVATE_KEY }}"
+            --var GROQ_KEYS_A:"${{ secrets.GROQ_KEYS_A }}"
+            --var GROQ_KEYS_B:"${{ secrets.GROQ_KEYS_B }}"
+            --var GROQ_KEYS_C:"${{ secrets.GROQ_KEYS_C }}"
+            --var DEV_MASTER_PIN_4:"${{ secrets.DEV_MASTER_PIN_4 }}"
+            --var DEV_MASTER_PIN_6:"${{ secrets.DEV_MASTER_PIN_6 }}"
