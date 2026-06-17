@@ -6,6 +6,7 @@ import { create } from 'zustand'
 import supabase from '../services/supabase/client'
 import { apiUrl } from '../services/apiBase'
 import queryClient from '../lib/queryClient'
+import { indexedDbPersister } from '../lib/queryPersister'
 import { descargarSnapshotsLocales } from '../lib/offlineSnapshots'
 import { clearOfflineAuthToken, saveOfflineAuthToken } from '../lib/offlineAuthToken'
 
@@ -55,6 +56,7 @@ function getStorageKeys(userId) {
 
 const CACHE_MAX_AGE_PERFIL = 1000 * 60 * 60 * 24 // 24h
 const CACHE_MAX_AGE_OPERATORS = 1000 * 60 * 60 * 24 * 7 // 7 días
+
 const ACTIVE_OPERATOR_KEY = 'listo_active_operator_id'
 const ACTIVE_ACCOUNT_KEY = 'listo_active_account_id'
 
@@ -386,6 +388,12 @@ const useAuthStore = create((set, get) => ({
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         console.log('[AUTH] evento:', event, 'session:', !!session, 'user:', session?.user?.email)
+        // Mantener el canal Realtime autenticado con el token actual —
+        // necesario para que postgres_changes sobre tablas con RLS entregue eventos
+        if (session?.access_token) {
+          try { supabase.realtime.setAuth(session.access_token) } catch { /* noop */ }
+        }
+
         if (event === 'INITIAL_SESSION') {
           try {
             if (session?.user) {
@@ -446,6 +454,8 @@ const useAuthStore = create((set, get) => ({
             console.log('[AUTH] SIGNED_OUT ignorado — offline y no fue logout manual')
             return
           }
+
+          // Si es manual, o si no hay perfil de operador activo (limpieza real)
           const wasLoggedIn = get().user !== null && !esManual
           const userId = get().user?.id
           clearOfflineAuthToken().catch(() => {})
@@ -605,6 +615,14 @@ const useAuthStore = create((set, get) => ({
     if (error) {
       set({ loading: false, error: traducirError(error.message), _cargandoPerfil: false })
       return { ok: false }
+    }
+
+    // Si entra una cuenta de negocio distinta, purgar el cache persistido para
+    // no arrastrar datos de la cuenta anterior (inventario/config son por cuenta)
+    const prevUserId = get().user?.id
+    if (prevUserId && prevUserId !== data.user.id) {
+      queryClient.clear()
+      indexedDbPersister.removeClient().catch(() => {})
     }
 
     // Setear user — el perfil SOLO se establece al seleccionar operador con PIN
@@ -801,8 +819,9 @@ const useAuthStore = create((set, get) => ({
       // Refrescar para limpiar app_metadata del JWT
       await supabase.auth.refreshSession()
 
-      // Limpiar cache de datos del operador anterior
+      // Limpiar cache de datos del operador anterior (memoria + persistido)
       queryClient.clear()
+      indexedDbPersister.removeClient().catch(() => {})
       const userId = get().user?.id
       guardarPerfilCache(null, userId)
       set({ perfil: null, loading: false, error: null })
@@ -835,8 +854,11 @@ const useAuthStore = create((set, get) => ({
 
     set({ _logoutManual: true })
     const userId = get().user?.id
-    await supabase.auth.signOut()
     clearOfflineAuthToken().catch(() => {})
+    await supabase.auth.signOut()
+    // Limpiar TODO el cache (memoria + persistido) — evita fugas entre cuentas de negocio
+    queryClient.clear()
+    indexedDbPersister.removeClient().catch(() => {})
     guardarPerfilCache(null, userId)
     set({ user: null, perfil: null, error: null, _logoutManual: false })
   },

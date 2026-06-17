@@ -26,6 +26,7 @@ function TransportistaForm({ inicial = {}, onGuardar, onCancelar, cargando }) {
     nombre:          inicial.nombre          ?? '',
     rif:             rifNumeroInit,
     color:           inicial.color           ?? '',
+    color_batea:     inicial.color_batea     ?? '',
     vehiculo:        inicial.vehiculo        ?? '',
     placa_chuto:     inicial.placa_chuto     ?? '',
     placa_batea:     inicial.placa_batea     ?? '',
@@ -107,6 +108,11 @@ function TransportistaForm({ inicial = {}, onGuardar, onCancelar, cargando }) {
           <label className="text-sm font-medium text-slate-700">Placa batea</label>
           <input value={campos.placa_batea} onChange={e => cambiar('placa_batea', e.target.value)}
             placeholder="Ej: XY456ZW" className={inputCls} disabled={cargando} />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-slate-700">Color batea</label>
+          <input value={campos.color_batea} onChange={e => cambiar('color_batea', e.target.value)}
+            placeholder="Ej: Blanco, Amarillo" className={inputCls} disabled={cargando} />
         </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-slate-700">Cobertura (Zonas)</label>
@@ -237,7 +243,11 @@ function TransportistaCard({ transportista, esSupervisor, puedeEditar, onEditar,
         {(transportista.placa_chuto || transportista.placa_batea) && (
           <div className="flex items-center gap-1.5 text-xs text-slate-500 flex-wrap">
             {transportista.placa_chuto && <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded">Chuto: {transportista.placa_chuto}</span>}
-            {transportista.placa_batea && <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded">Batea: {transportista.placa_batea}</span>}
+            {transportista.placa_batea && (
+              <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded">
+                Batea: {transportista.placa_batea}{transportista.color_batea ? ` (${transportista.color_batea})` : ''}
+              </span>
+            )}
           </div>
         )}
         {transportista.zona_cobertura && (
@@ -362,12 +372,13 @@ export default function TransportistasView() {
       const r = purificar(t.rif)
       const pC = purificar(t.placa_chuto)
       const pB = purificar(t.placa_batea)
+      const cB = normalizar(t.color_batea)
       const v = normalizar(t.vehiculo)
       const cob = normalizar(t.zona_cobertura)
       const cap = normalizar(t.capacidad)
       
       // Coincidencia en nombre, rif, placas, vehículo, cobertura o capacidad
-      return n.includes(q) || r.includes(qP) || pC.includes(qP) || pB.includes(qP) || v.includes(q) || cob.includes(q) || cap.includes(q)
+      return n.includes(q) || r.includes(qP) || pC.includes(qP) || pB.includes(qP) || cB.includes(q) || v.includes(q) || cob.includes(q) || cap.includes(q)
     })
   }, [transportistas, search])
 

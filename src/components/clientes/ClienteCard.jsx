@@ -1,6 +1,4 @@
-// src/components/clientes/ClienteCard.jsx
-// Tarjeta de cliente — color header strip del vendedor asignado
-import { Phone, Mail, MapPin, Hash, Tag, Pencil, UserMinus, ArrowRightLeft, FileText, AlertCircle, BookOpen, Trash2, UserCheck, Handshake } from 'lucide-react'
+import { Phone, Mail, MapPin, Hash, Tag, Pencil, UserMinus, ArrowRightLeft, FileText, AlertCircle, BookOpen, Trash2, UserCheck, Handshake, DollarSign, Briefcase } from 'lucide-react'
 import useAuthStore from '../../store/useAuthStore'
 import { fmtUsdSimple as fmtUsd } from '../../utils/format'
 
@@ -14,7 +12,7 @@ function Contacto({ icono: Icono, valor }) {
   )
 }
 
-const TIPO_LABELS = { natural: 'Natural', juridico: 'Jurídico' }
+const TIPO_LABELS = { natural: 'Natural', juridico: 'Jurídico', personal: 'Personal' }
 
 // Genera iniciales del nombre (máx 2 caracteres)
 function getIniciales(nombre = '') {
@@ -23,7 +21,7 @@ function getIniciales(nombre = '') {
   return nombre.slice(0, 2).toUpperCase()
 }
 
-export default function ClienteCard({ cliente, onEditar, onReasignar, onCotizar, onVerFicha, onBorrar, onActivar }) {
+export default function ClienteCard({ cliente, onEditar, onReasignar, onCotizar, onVerFicha, onBorrar, onActivar, esPersonalSection = false, onPromoverPersonal }) {
   const { perfil } = useAuthStore()
   const esSupervisor = (perfil?.rol === 'supervisor' || perfil?.rol === 'jefe')
   const esAdministracion = perfil?.rol === 'administracion'
@@ -72,7 +70,9 @@ export default function ClienteCard({ cliente, onEditar, onReasignar, onCotizar,
         {cliente.tipo_cliente && (
           <span className="relative z-10 ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full"
             style={{ background: 'rgba(255,255,255,0.25)', color: 'white', border: '1px solid rgba(255,255,255,0.4)' }}>
-            {TIPO_LABELS[cliente.tipo_cliente] || cliente.tipo_cliente}
+            {cliente.tipo_cliente === 'personal' && cliente.categoria
+              ? cliente.categoria.toUpperCase()
+              : (TIPO_LABELS[cliente.tipo_cliente] || cliente.tipo_cliente)}
           </span>
         )}
       </div>
@@ -125,39 +125,63 @@ export default function ClienteCard({ cliente, onEditar, onReasignar, onCotizar,
 
       {/* ── Saldo pendiente (crédito) ── */}
       {esAdministracion ? (
-        <div className={`mx-4 mb-2 flex items-center justify-between rounded-lg px-3 py-2 border ${
-          Number(cliente.saldo_pendiente || 0) > 0
-            ? 'bg-red-50 border-red-200'
-            : 'bg-emerald-50 border-emerald-200'
-        }`}>
-          <span className={`flex items-center gap-1.5 text-xs font-semibold ${
-            Number(cliente.saldo_pendiente || 0) > 0 ? 'text-red-600' : 'text-emerald-600'
+        <div className="flex flex-col gap-1.5 mx-4 mb-2">
+          <div className={`flex items-center justify-between rounded-lg px-3 py-2 border ${
+            Number(cliente.saldo_pendiente || 0) > 0
+              ? 'bg-red-50 border-red-200'
+              : 'bg-emerald-50 border-emerald-200'
           }`}>
-            <AlertCircle size={12} />
-            {Number(cliente.saldo_pendiente || 0) > 0 ? 'Deuda' : 'Sin deuda'}
-          </span>
-          <span className={`text-sm font-black ${
-            Number(cliente.saldo_pendiente || 0) > 0 ? 'text-red-700' : 'text-emerald-700'
-          }`}>{fmtUsd(cliente.saldo_pendiente || 0)}</span>
+            <span className={`flex items-center gap-1.5 text-xs font-semibold ${
+              Number(cliente.saldo_pendiente || 0) > 0 ? 'text-red-600' : 'text-emerald-600'
+            }`}>
+              <AlertCircle size={12} />
+              {Number(cliente.saldo_pendiente || 0) > 0 ? 'Deuda' : 'Sin deuda'}
+            </span>
+            <span className={`text-sm font-black ${
+              Number(cliente.saldo_pendiente || 0) > 0 ? 'text-red-700' : 'text-emerald-700'
+            }`}>{fmtUsd(cliente.saldo_pendiente || 0)}</span>
+          </div>
+          {Number(cliente.saldo_a_favor || 0) > 0 && (
+            <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600">
+                <DollarSign size={12} className="text-emerald-500" />
+                Saldo a Favor
+              </span>
+              <span className="text-sm font-black text-emerald-700">{fmtUsd(cliente.saldo_a_favor)}</span>
+            </div>
+          )}
         </div>
-      ) : Number(cliente.saldo_pendiente || 0) > 0 && (
-        <div className="mx-4 mb-2 flex items-center justify-between bg-red-50 rounded-lg px-3 py-1.5 border border-red-100">
-          <span className="flex items-center gap-1 text-xs text-red-600 font-semibold">
-            <AlertCircle size={11} />
-            Deuda
-          </span>
-          <span className="text-xs font-bold text-red-700">{fmtUsd(cliente.saldo_pendiente)}</span>
-        </div>
+      ) : (
+        <>
+          {Number(cliente.saldo_pendiente || 0) > 0 && (
+            <div className="mx-4 mb-2 flex items-center justify-between bg-red-50 rounded-lg px-3 py-1.5 border border-red-100">
+              <span className="flex items-center gap-1 text-xs text-red-600 font-semibold">
+                <AlertCircle size={11} />
+                Deuda
+              </span>
+              <span className="text-xs font-bold text-red-700">{fmtUsd(cliente.saldo_pendiente)}</span>
+            </div>
+          )}
+          {Number(cliente.saldo_a_favor || 0) > 0 && (
+            <div className="mx-4 mb-2 flex items-center justify-between bg-emerald-50 rounded-lg px-3 py-1.5 border border-emerald-100">
+              <span className="flex items-center gap-1 text-xs text-emerald-600 font-semibold">
+                <DollarSign size={11} className="text-emerald-500" />
+                Saldo a Favor
+              </span>
+              <span className="text-xs font-bold text-emerald-700">{fmtUsd(cliente.saldo_a_favor)}</span>
+            </div>
+          )}
+        </>
       )}
 
       {/* ── Préstamos activos ── */}
       {cliente.tiene_prestamos_activos && (
-        <div className="mx-4 mb-3 flex items-center justify-between bg-emerald-50 rounded-lg px-3 py-1.5 border border-emerald-100 shadow-sm animate-pulse">
-          <span className="flex items-center gap-1 text-xs text-emerald-700 font-bold uppercase tracking-wider">
-            <Handshake size={12} className="text-emerald-600" />
+        <div className="mx-4 mb-3 flex items-center justify-between bg-amber-50 rounded-lg px-3 py-1.5 border border-amber-100 shadow-sm animate-pulse">
+          <span className="flex items-center gap-1 text-xs text-amber-700 font-bold uppercase tracking-wider">
+            <Handshake size={12} className="text-amber-600" />
             Préstamo Activo
           </span>
-          <span className="text-[9px] bg-emerald-600 text-white font-black px-2 py-0.5 rounded-full">PENDIENTE</span>
+          <span className="text-[9px] bg-amber-600 text-white font-black px-2 py-0.5 rounded-full">PENDIENTE</span>
         </div>
       )}
 
@@ -170,7 +194,7 @@ export default function ClienteCard({ cliente, onEditar, onReasignar, onCotizar,
 
       {/* ── Acciones ── */}
       <div className="mt-auto border-t border-slate-100 px-2 py-2 flex items-center flex-wrap gap-1">
-        {!esAdministracion && (
+        {!esAdministracion && onCotizar && (
           <button onClick={() => onCotizar(cliente)} title="Cotizar con este cliente"
             className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium text-emerald-600 hover:bg-emerald-50 active:bg-emerald-100 transition-colors">
             <FileText size={13} />
@@ -179,31 +203,37 @@ export default function ClienteCard({ cliente, onEditar, onReasignar, onCotizar,
         )}
         {onVerFicha && (
           <button onClick={() => onVerFicha(cliente)} title="Ver ficha del cliente"
-            className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium text-violet-600 hover:bg-violet-50 active:bg-violet-100 transition-colors ${esAdministracion ? 'flex-1 justify-center py-2' : ''}`}>
+            className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium text-violet-600 hover:bg-violet-50 active:bg-violet-100 transition-colors ${(esAdministracion && !esPersonalSection) ? 'flex-1 justify-center py-2' : ''}`}>
             <BookOpen size={13} />
-            {esAdministracion ? 'Ver cuenta' : 'Ficha'}
+            {(esAdministracion && !esPersonalSection) ? 'Ver cuenta' : 'Ficha'}
           </button>
         )}
-        {!esAdministracion && (esPropio || esSupervisor) && (
+        {onEditar && (esPersonalSection ? ['administracion', 'jefe', 'desarrollador'].includes(perfil?.rol) : (!esAdministracion && (esPropio || esSupervisor))) && (
           <button onClick={() => onEditar(cliente)} title="Editar cliente"
             className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium text-sky-600 hover:bg-sky-50 active:bg-sky-100 transition-colors">
             <Pencil size={13} />
             Editar
           </button>
         )}
-        {(esSupervisor || esAdministracion) && (
+        {onReasignar && (esSupervisor || esAdministracion) && (
           <button onClick={() => onReasignar(cliente)} title="Reasignar cliente"
             className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors">
             <ArrowRightLeft size={14} />
           </button>
         )}
-        {!cliente.activo && onActivar && (
+        {onPromoverPersonal && cliente.tipo_cliente !== 'personal' && cliente.activo && (
+          <button onClick={() => onPromoverPersonal(cliente)} title="Pasar a Personal"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-amber-500 hover:bg-amber-50 active:bg-amber-100 transition-colors">
+            <Briefcase size={14} />
+          </button>
+        )}
+        {!cliente.activo && onActivar && (esPersonalSection ? ['administracion', 'jefe', 'desarrollador'].includes(perfil?.rol) : (!esAdministracion && (esPropio || esSupervisor))) && (
           <button onClick={() => onActivar(cliente)} title="Reactivar cliente"
             className="p-1.5 rounded-lg text-emerald-500 hover:bg-emerald-50 active:bg-emerald-100 transition-colors">
             <UserCheck size={14} />
           </button>
         )}
-        {!esAdministracion && (esPropio || esSupervisor) && onBorrar && cliente.activo && (
+        {onBorrar && cliente.activo && (esPersonalSection ? ['administracion', 'jefe', 'desarrollador'].includes(perfil?.rol) : (!esAdministracion && (esPropio || esSupervisor))) && (
           <button onClick={() => onBorrar(cliente)} title="Eliminar cliente"
             className="ml-auto p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 active:bg-red-100 transition-colors">
             <Trash2 size={14} />

@@ -1335,6 +1335,8 @@ export function parsearLineaCompletaInteligente(linea) {
   if (
     cleanLineForFilter.includes('LISTA DE PRECIOS') || 
     cleanLineForFilter.includes('CONSTRUACERO') || 
+    cleanLineForFilter.includes('LISTO') || 
+    cleanLineForFilter.includes('LISTOPOS') || 
     cleanLineForFilter.includes('RIF-') || 
     cleanLineForFilter.includes('PRODUCTOS') || 
     cleanLineForFilter.includes('CATEGORIAS') || 

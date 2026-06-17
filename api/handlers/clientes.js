@@ -1,5 +1,5 @@
 // api/handlers/clientes.js
-import { json, jsonError, corsHeaders, isRateLimited, sanitizeSearch, isValidUuid } from '../lib/utils.js'
+import { json, jsonError, corsHeaders, isRateLimited, sanitizeSearch, isValidUuid, removeAccents } from '../lib/utils.js'
 import { verifyAuth, validateOperator } from '../lib/auth.js'
 import { registrarAuditoria } from '../lib/audit.js'
 
@@ -47,7 +47,7 @@ export async function handleListarClientes(request, env) {
   // Fetch ALL active clients — filtrado en el Worker (in-memory, rápido)
   // limit=10000 evita el tope de 1000 filas de PostgREST
   // Fetch ALL clients (incluyendo inactivos) — filtrado en el Worker
-  let baseUrl = `${env.SUPABASE_URL}/rest/v1/clientes?cuenta_id=eq.${user.id}&order=nombre.asc&limit=10000&select=id,codigo_cliente,nombre,rif_cedula,telefono,email,direccion,estado,ciudad,notas,tipo_cliente,activo,vendedor_id,saldo_pendiente,creado_en,vendedor:usuarios!clientes_vendedor_id_fkey(id,nombre,color,rol)`;
+  let baseUrl = `${env.SUPABASE_URL}/rest/v1/clientes?cuenta_id=eq.${user.id}&order=nombre.asc&limit=10000&select=id,codigo_cliente,nombre,rif_cedula,telefono,email,direccion,estado,ciudad,notas,tipo_cliente,activo,vendedor_id,saldo_pendiente,saldo_a_favor,creado_en,categoria,vendedor:usuarios!clientes_vendedor_id_fkey(id,nombre,color,rol)`;
 
   if (esExterno) {
     baseUrl += `&vendedor_id=eq.${operador.id}`;
@@ -84,11 +84,11 @@ export async function handleListarClientes(request, env) {
   }));
 
   if (busqueda.trim()) {
-    const raw  = busqueda.trim().toLowerCase();
+    const raw  = removeAccents(busqueda.trim().toLowerCase());
     const norm = raw.replace(/[\.\-\(\)\s\/\\]/g, '');
 
     data = data.filter(c => {
-      const nombre = (c.nombre    || '').toLowerCase();
+      const nombre = removeAccents((c.nombre    || '').toLowerCase());
       const codigo = (c.codigo_cliente || '').toLowerCase();
       const rif    = (c.rif_cedula|| '').toLowerCase().replace(/[\.\-\(\)\s\/\\]/g, '');
       const tel    = (c.telefono  || '').toLowerCase().replace(/[\.\-\(\)\s\/\\]/g, '');
@@ -122,7 +122,7 @@ export async function handleClientesLookup(request, env) {
 
   const esExterno = !!operador.es_externo;
 
-  let queryUrl = `${env.SUPABASE_URL}/rest/v1/clientes?id=in.(${ids.map(encodeURIComponent).join(',')})&cuenta_id=eq.${user.id}&select=id,codigo_cliente,nombre,rif_cedula,telefono,email,direccion,estado,ciudad,tipo_cliente,vendedor_id,creado_en,vendedor:usuarios!clientes_vendedor_id_fkey(id,nombre,color,rol)`;
+  let queryUrl = `${env.SUPABASE_URL}/rest/v1/clientes?id=in.(${ids.map(encodeURIComponent).join(',')})&cuenta_id=eq.${user.id}&select=id,codigo_cliente,nombre,rif_cedula,telefono,email,direccion,estado,ciudad,tipo_cliente,vendedor_id,creado_en,categoria,vendedor:usuarios!clientes_vendedor_id_fkey(id,nombre,color,rol)`;
 
   if (esExterno) {
     queryUrl += `&vendedor_id=eq.${operador.id}`;
@@ -307,7 +307,7 @@ export async function handleCrearCliente(request, env) {
   let body;
   try { body = await request.json(); } catch { return jsonError('Body inválido', 400, request); }
 
-  const { nombre, rif_cedula, telefono, email, direccion, estado, ciudad, notas, tipo_cliente, vendedor_id } = body;
+  const { nombre, rif_cedula, telefono, email, direccion, estado, ciudad, notas, tipo_cliente, vendedor_id, categoria } = body;
   if (!nombre?.trim()) return jsonError('El nombre es obligatorio', 400, request);
 
   const esExterno = !!operador.es_externo;
@@ -322,6 +322,17 @@ export async function handleCrearCliente(request, env) {
     }
   }
 
+  let finalVendedorId = esExterno ? operador.id : (vendedor_id || operador.id);
+  if (tipo_cliente === 'personal') {
+    const empRes = await fetch(`${env.SUPABASE_URL}/rest/v1/usuarios?nombre=ilike.EMPRESA&activo=eq.true&select=id`, { headers });
+    if (empRes.ok) {
+      const empUsers = await empRes.json();
+      if (empUsers.length > 0) {
+        finalVendedorId = empUsers[0].id;
+      }
+    }
+  }
+
   const payload = {
     nombre: nombre.trim(),
     rif_cedula: rif_cedula?.trim() || null,
@@ -332,7 +343,8 @@ export async function handleCrearCliente(request, env) {
     ciudad: ciudad?.trim() || null,
     notas: notas?.trim() || null,
     tipo_cliente: tipo_cliente || 'natural',
-    vendedor_id: esExterno ? operador.id : (vendedor_id || operador.id),
+    categoria: categoria?.trim() || null,
+    vendedor_id: finalVendedorId,
     cuenta_id: user.id,
     activo: true,
   };
@@ -360,7 +372,7 @@ export async function handleActualizarCliente(request, env) {
   let body;
   try { body = await request.json(); } catch { return jsonError('Body inválido', 400, request); }
 
-  const { id, nombre, rif_cedula, telefono, email, direccion, estado, ciudad, notas, tipo_cliente } = body;
+  const { id, nombre, rif_cedula, telefono, email, direccion, estado, ciudad, notas, tipo_cliente, categoria } = body;
   if (!id || !isValidUuid(id)) return jsonError('ID inválido', 400, request);
   if (!nombre?.trim()) return jsonError('El nombre es obligatorio', 400, request);
 
@@ -389,8 +401,19 @@ export async function handleActualizarCliente(request, env) {
     ciudad: ciudad?.trim() || null,
     notas: notas?.trim() || null,
     tipo_cliente: tipo_cliente || 'natural',
+    categoria: categoria?.trim() || null,
     actualizado_en: new Date().toISOString(),
   };
+
+  if (tipo_cliente === 'personal') {
+    const empRes = await fetch(`${env.SUPABASE_URL}/rest/v1/usuarios?nombre=ilike.EMPRESA&activo=eq.true&select=id`, { headers });
+    if (empRes.ok) {
+      const empUsers = await empRes.json();
+      if (empUsers.length > 0) {
+        payload.vendedor_id = empUsers[0].id;
+      }
+    }
+  }
 
   let updateUrl = `${env.SUPABASE_URL}/rest/v1/clientes?id=eq.${id}&cuenta_id=eq.${user.id}`;
   if (esExterno) {
@@ -550,31 +573,38 @@ export async function handleReasignarClientesBulk(request, env) {
 // Helper local para sincronizar saldo pendiente del cliente
 async function recalcularSaldoPendienteCliente(clienteId, env, headers) {
   try {
-    const cxcRes = await fetch(`${env.SUPABASE_URL}/rest/v1/cuentas_por_cobrar?cliente_id=eq.${clienteId}&select=tipo,monto_usd`, { headers });
+    const cxcRes = await fetch(`${env.SUPABASE_URL}/rest/v1/cuentas_por_cobrar?cliente_id=eq.${clienteId}&select=tipo,monto_usd,forma_pago_abono`, { headers });
     if (!cxcRes.ok) return;
     const cxcList = await cxcRes.json();
     
     let saldoReal = 0;
+    let saldoFavor = 0;
     if (Array.isArray(cxcList)) {
       cxcList.forEach(item => {
         const monto = Number(item.monto_usd) || 0;
         if (item.tipo === 'cargo') {
           saldoReal += monto;
-        } else {
+        } else if (item.tipo === 'abono') {
           saldoReal -= monto;
+          if (item.forma_pago_abono === 'Saldo a favor') {
+            saldoFavor -= monto;
+          }
+        } else if (item.tipo === 'credito') {
+          saldoFavor += monto;
         }
       });
     }
     
     saldoReal = Math.max(0, Math.round(saldoReal * 10000) / 10000);
+    saldoFavor = Math.max(0, Math.round(saldoFavor * 10000) / 10000);
     
     await fetch(`${env.SUPABASE_URL}/rest/v1/clientes?id=eq.${clienteId}`, {
       method: 'PATCH',
       headers: { ...headers, Prefer: 'return=minimal' },
-      body: JSON.stringify({ saldo_pendiente: saldoReal }),
+      body: JSON.stringify({ saldo_pendiente: saldoReal, saldo_a_favor: saldoFavor }),
     });
     
-    console.log(`[RECALCULO-SALDO] Cliente ${clienteId} saldo sincronizado a $${saldoReal}`);
+    console.log(`[RECALCULO-SALDO] Cliente ${clienteId} saldo sincronizado a pendiente=$${saldoReal}, a_favor=$${saldoFavor}`);
   } catch (err) {
     console.error(`[RECALCULO-SALDO] Error al recalcular saldo para cliente ${clienteId}:`, err?.message);
   }

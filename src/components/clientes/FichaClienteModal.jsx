@@ -1,12 +1,13 @@
 // src/components/clientes/FichaClienteModal.jsx
 // Modal ficha del cliente: historial de crédito + formulario de abono
 import { useState, useEffect } from 'react'
-import { X, CreditCard, ArrowUpCircle, ArrowDownCircle, AlertCircle, RefreshCw, DollarSign, Hash, Phone, FileText, ChevronRight, MessageSquare, Handshake, RotateCcw, ShoppingBag, ChevronDown } from 'lucide-react'
-import { useCuentasCobrar, useRegistrarAbono, useRevertirAbono } from '../../hooks/useCuentasCobrar'
+import { X, CreditCard, ArrowUpCircle, ArrowDownCircle, AlertCircle, RefreshCw, DollarSign, Hash, Phone, FileText, ChevronRight, MessageSquare, Handshake, RotateCcw, ShoppingBag, ChevronDown, Briefcase } from 'lucide-react'
+import { useCuentasCobrar, useRegistrarAbono, useRevertirAbono, useRegistrarSaldoFavor, useRegistrarDevolucionCredito } from '../../hooks/useCuentasCobrar'
 import { useVentasCliente } from '../../hooks/useClientes'
+import { useConfigNegocio } from '../../hooks/useConfigNegocio'
 import SeguimientoTimeline from '../ui/SeguimientoTimeline'
 import useAuthStore from '../../store/useAuthStore'
-import { fmtUsdSimple as fmtUsd } from '../../utils/format'
+import { fmtUsdSimple as fmtUsd, removeAccents } from '../../utils/format'
 import EstadoBadge from '../cotizaciones/EstadoBadge'
 import { showToast } from '../ui/Toast'
 import { apiUrl } from '../../services/apiBase'
@@ -20,7 +21,7 @@ function fmtFecha(iso) {
     ' ' + d.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' })
 }
 
-const METODOS = ['Efectivo $', 'Efectivo Bs', 'Zelle', 'Pago Móvil', 'Punto de Venta', 'USDT', 'Transferencia', 'Cruce']
+const METODOS = ['Efectivo $', 'Efectivo Bs', 'Zelle', 'Transf. / Pago Móvil', 'Punto de Venta', 'USDT', 'Cruce']
 
 function FormAbono({ clienteId, saldo, onSuccess }) {
   // Cada línea de pago: { metodo, monto, referencia }
@@ -195,6 +196,226 @@ function FormAbono({ clienteId, saldo, onSuccess }) {
   )
 }
 
+function FormSaldoFavor({ clienteId, onSuccess }) {
+  const [monto, setMonto] = useState('')
+  const [formaPago, setFormaPago] = useState('Efectivo $')
+  const [referencia, setReferencia] = useState('')
+  const [descripcion, setDescripcion] = useState('')
+  const registrarSaldoFavor = useRegistrarSaldoFavor()
+
+  const sinMonto = !monto || parseFloat(monto) <= 0
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (sinMonto) return
+
+    await registrarSaldoFavor.mutateAsync({
+      clienteId,
+      monto: parseFloat(monto),
+      formaPago,
+      referencia: referencia || null,
+      descripcion: descripcion || 'Crédito / Saldo a favor recibido',
+    })
+    setMonto('')
+    setReferencia('')
+    setDescripcion('')
+    onSuccess?.()
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
+      <h4 className="text-sm font-black text-blue-800 flex items-center gap-2">
+        <ArrowDownCircle size={15} className="text-blue-600" />
+        Cargar saldo a favor
+      </h4>
+
+      <div className="bg-white border border-blue-100 rounded-xl p-3 space-y-2">
+        <div>
+          <label className="block text-[10px] font-semibold text-slate-500 mb-1">Monto USD</label>
+          <input
+            type="number"
+            step="0.01"
+            min="0.01"
+            value={monto}
+            onChange={e => setMonto(e.target.value)}
+            placeholder="0.00"
+            className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+          />
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-semibold text-slate-500 mb-1">Forma de pago</label>
+          <div className="flex flex-wrap gap-1">
+            {METODOS.filter(m => m !== 'Cruce').map(m => (
+              <button key={m} type="button"
+                onClick={() => setFormaPago(m)}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-all ${
+                  formaPago === m
+                    ? 'bg-blue-500 text-white border-blue-500 shadow-sm'
+                    : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:text-blue-600'
+                }`}>
+                {m}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-semibold text-slate-500 mb-1">Referencia (opcional)</label>
+          <input
+            type="text"
+            value={referencia}
+            onChange={e => setReferencia(e.target.value)}
+            placeholder="Nº de confirmación, comprobante..."
+            className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs font-semibold text-slate-600 mb-1">Descripción (opcional)</label>
+        <input
+          type="text"
+          value={descripcion}
+          onChange={e => setDescripcion(e.target.value)}
+          placeholder="Ej: Anticipo para futuros despachos"
+          className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+        />
+      </div>
+
+      <button
+        type="submit"
+        disabled={registrarSaldoFavor.isPending || sinMonto}
+        className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-bold rounded-lg transition-colors"
+      >
+        {registrarSaldoFavor.isPending ? 'Cargando...' : 'Confirmar saldo a favor'}
+      </button>
+    </form>
+  )
+}
+
+function FormDevolucionCredito({ clienteId, saldoFavor, onSuccess }) {
+  const [monto, setMonto] = useState('')
+  const [formaPago, setFormaPago] = useState('Efectivo $')
+  const [referencia, setReferencia] = useState('')
+  const [descripcion, setDescripcion] = useState('')
+  const registrarDevolucion = useRegistrarDevolucionCredito()
+
+  const sinMonto = !monto || parseFloat(monto) <= 0
+  const excede = saldoFavor > 0 && parseFloat(monto) > saldoFavor + 0.001
+
+  function ponerTotal() {
+    setMonto(saldoFavor.toFixed(2))
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (sinMonto || excede) return
+
+    await registrarDevolucion.mutateAsync({
+      clienteId,
+      monto: parseFloat(monto),
+      formaPago,
+      referencia: referencia || null,
+      descripcion: descripcion || 'Devolución de saldo a favor registrada',
+    })
+    setMonto('')
+    setReferencia('')
+    setDescripcion('')
+    onSuccess?.(parseFloat(monto))
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+      <h4 className="text-sm font-black text-amber-800 flex items-center gap-2">
+        <ArrowUpCircle size={15} className="text-amber-600" />
+        Devolver saldo a favor (Reembolso)
+      </h4>
+
+      <div className="bg-white border border-amber-100 rounded-xl p-3 space-y-2">
+        <div>
+          <label className="block text-[10px] font-semibold text-slate-500 mb-1">Monto USD</label>
+          <div className="flex gap-1">
+            <input
+              type="number"
+              step="0.01"
+              min="0.01"
+              max={saldoFavor}
+              value={monto}
+              onChange={e => setMonto(e.target.value)}
+              placeholder="0.00"
+              className="flex-1 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
+            />
+            {saldoFavor > 0 && (
+              <button
+                type="button"
+                onClick={ponerTotal}
+                className="px-3 py-2 rounded-lg bg-amber-100 text-amber-700 text-xs font-bold hover:bg-amber-200 transition-colors whitespace-nowrap"
+              >
+                Total
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-semibold text-slate-500 mb-1">Forma de devolución</label>
+          <div className="flex flex-wrap gap-1">
+            {METODOS.filter(m => m !== 'Cruce').map(m => (
+              <button key={m} type="button"
+                onClick={() => setFormaPago(m)}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-all ${
+                  formaPago === m
+                    ? 'bg-amber-500 text-white border-amber-500 shadow-sm'
+                    : 'bg-white text-slate-600 border-slate-200 hover:border-amber-300 hover:text-amber-600'
+                }`}>
+                {m}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-semibold text-slate-500 mb-1">Referencia (opcional)</label>
+          <input
+            type="text"
+            value={referencia}
+            onChange={e => setReferencia(e.target.value)}
+            placeholder="Nº de confirmación, comprobante..."
+            className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs font-semibold text-slate-600 mb-1">Descripción (opcional)</label>
+        <input
+          type="text"
+          value={descripcion}
+          onChange={e => setDescripcion(e.target.value)}
+          placeholder="Ej: Devolución por excedente de pago"
+          className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
+        />
+      </div>
+
+      {excede && (
+        <p className="text-xs text-red-600 font-semibold flex items-center gap-1">
+          <AlertCircle size={12} />
+          El monto supera el saldo a favor disponible ({fmtUsd(saldoFavor)}). Reduce el monto.
+        </p>
+      )}
+
+      <button
+        type="submit"
+        disabled={registrarDevolucion.isPending || sinMonto || excede}
+        className="w-full py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-bold rounded-lg transition-colors"
+      >
+        {registrarDevolucion.isPending ? 'Procesando...' : 'Confirmar devolución'}
+      </button>
+    </form>
+  )
+}
+
 
 // ─── Historial de Ventas Aprobadas con Acordeón ──────────────────────────────
 function HistorialVentas({ clienteId }) {
@@ -324,6 +545,7 @@ function HistorialVentas({ clienteId }) {
 // ─── Modal principal ─────────────────────────────────────────────────────────
 export default function FichaClienteModal({ cliente, isOpen, onClose }) {
   const { perfil } = useAuthStore()
+  const { data: config = {} } = useConfigNegocio()
   const puedeRegistrarAbono = ['administracion', 'jefe', 'desarrollador'].includes(perfil?.rol)
   const puedeRevertirAbono = ['administracion', 'jefe', 'desarrollador'].includes(perfil?.rol)
   const { data: movimientos = [], isLoading, refetch } = useCuentasCobrar(isOpen ? cliente?.id : null)
@@ -403,23 +625,47 @@ export default function FichaClienteModal({ cliente, isOpen, onClose }) {
   }
 
   const prestamosFiltrados = prestamos.filter(p => {
-    const term = busquedaPrestamos.toLowerCase()
-    const pName = (p.producto?.nombre || '').toLowerCase()
-    const pCode = (p.producto?.codigo || '').toLowerCase()
+    const term = removeAccents(busquedaPrestamos.toLowerCase())
+    const pName = removeAccents(p.producto?.nombre || '').toLowerCase()
+    const pCode = removeAccents(p.producto?.codigo || '').toLowerCase()
     return pName.includes(term) || pCode.includes(term)
   })
 
   // Saldo local para actualización inmediata tras abonar (sin esperar cache del padre)
   const [saldoLocal, setSaldoLocal] = useState(null)
+  const [saldoFavorLocal, setSaldoFavorLocal] = useState(null)
+  const [cxcAction, setCxcAction] = useState('abono')
+  const [prevClienteId, setPrevClienteId] = useState(null)
 
   // Sincronizar cuando el prop cambia (al abrir el modal o cuando el padre refresca)
   useEffect(() => {
-    setSaldoLocal(Number(cliente?.saldo_pendiente || 0))
-  }, [cliente?.id, cliente?.saldo_pendiente])
+    const pDeuda = Number(cliente?.saldo_pendiente || 0);
+    const pFavor = Number(cliente?.saldo_a_favor || 0);
+    setSaldoLocal(pDeuda)
+    setSaldoFavorLocal(pFavor)
+
+    // Solo cambiar acción si es un cliente distinto
+    if (cliente?.id !== prevClienteId) {
+      setPrevClienteId(cliente?.id)
+      if (pDeuda > 0) {
+        setCxcAction('abono')
+      } else {
+        setCxcAction('saldo_favor')
+      }
+    } else {
+      // Si el mismo cliente actualizó saldos, verificar validez de la acción actual
+      if (cxcAction === 'abono' && pDeuda <= 0) {
+        setCxcAction('saldo_favor')
+      } else if (cxcAction === 'devolucion_credito' && pFavor <= 0) {
+        setCxcAction(pDeuda > 0 ? 'abono' : 'saldo_favor')
+      }
+    }
+  }, [cliente?.id, cliente?.saldo_pendiente, cliente?.saldo_a_favor, cxcAction, prevClienteId])
 
   if (!isOpen || !cliente) return null
 
   const saldo = saldoLocal ?? Number(cliente.saldo_pendiente || 0)
+  const saldoFavor = saldoFavorLocal ?? Number(cliente.saldo_a_favor || 0)
   const color = cliente.vendedor?.color || '#64748b'
 
   const tienePrestamosActivos = cargadoUnaVez
@@ -445,6 +691,11 @@ export default function FichaClienteModal({ cliente, isOpen, onClose }) {
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h2 className="font-black text-white text-base leading-tight truncate">{cliente.nombre}</h2>
+                  {cliente.tipo_cliente === 'personal' && (
+                    <span className="inline-flex items-center gap-1 bg-[#FEF3C7] text-[#B45309] text-[11px] font-black px-2 py-0.5 rounded-lg border border-[#FDE68A] shrink-0 uppercase tracking-wider shadow-sm">
+                      Personal (Desc. {config.descuento_personal_pct ?? 10}%)
+                    </span>
+                  )}
                   {cliente.codigo_cliente && (
                     <span 
                       className="bg-white text-slate-900 font-mono font-black text-[11px] px-2 py-0.5 rounded-lg shadow-md border border-white/80 shrink-0 select-all cursor-pointer transition-all active:scale-95 hover:bg-slate-100" 
@@ -457,12 +708,18 @@ export default function FichaClienteModal({ cliente, isOpen, onClose }) {
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-3 mt-0.5">
+                <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                   {cliente.rif_cedula && (
                     <span className="flex items-center gap-1 text-xs text-white/70"><Hash size={10} />{cliente.rif_cedula}</span>
                   )}
                   {cliente.telefono && (
                     <span className="flex items-center gap-1 text-xs text-white/70"><Phone size={10} />{cliente.telefono}</span>
+                  )}
+                  {cliente.tipo_cliente === 'personal' && cliente.categoria && (
+                    <span className="inline-flex items-center gap-1 bg-white/20 text-white text-[11px] font-bold px-2 py-0.5 rounded-lg border border-white/30 shrink-0 uppercase tracking-wider">
+                      <Briefcase size={10} className="text-white/80" />
+                      {cliente.categoria}
+                    </span>
                   )}
                 </div>
               </div>
@@ -480,9 +737,15 @@ export default function FichaClienteModal({ cliente, isOpen, onClose }) {
               {saldo > 0 ? <AlertCircle size={14} /> : <DollarSign size={14} />}
               {saldo > 0 ? `Deuda: ${fmtUsd(saldo)}` : 'Sin deuda pendiente'}
             </div>
+            {saldoFavor > 0 && (
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-black bg-emerald-500/30 text-white border border-emerald-300/40">
+                <DollarSign size={14} className="text-emerald-200" />
+                Saldo a Favor: {fmtUsd(saldoFavor)}
+              </div>
+            )}
             {tienePrestamosActivos && (
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-black bg-emerald-500/30 text-white border border-emerald-300/40 animate-pulse">
-                <Handshake size={14} className="text-emerald-200" />
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-black bg-amber-500/30 text-white border border-amber-300/40 animate-pulse">
+                <Handshake size={14} className="text-amber-200" />
                 Tiene préstamos activos
               </div>
             )}
@@ -543,13 +806,75 @@ export default function FichaClienteModal({ cliente, isOpen, onClose }) {
           {/* PESTAÑA: CUENTA Y MOVIMIENTOS */}
           {activeTab === 'cuenta' && (
             <div className="space-y-4">
-              {/* Formulario abono (supervisor o administración si hay deuda) */}
-              {puedeRegistrarAbono && saldo > 0 && (
+              {/* Selector de Acción CxC */}
+              {puedeRegistrarAbono && (
+                <div className="flex gap-1 p-1 bg-slate-100 rounded-xl text-xs shrink-0 select-none">
+                  <button
+                    type="button"
+                    onClick={() => setCxcAction('abono')}
+                    disabled={saldo <= 0}
+                    className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all ${
+                      cxcAction === 'abono'
+                        ? 'bg-white text-slate-800 shadow-sm border border-slate-100'
+                        : 'text-slate-500 hover:text-slate-700 disabled:opacity-40 disabled:hover:bg-transparent'
+                    }`}
+                  >
+                    Abonar Deuda
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCxcAction('saldo_favor')}
+                    className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all ${
+                      cxcAction === 'saldo_favor'
+                        ? 'bg-white text-slate-800 shadow-sm border border-slate-100'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    Cargar Crédito
+                  </button>
+                  {saldoFavor > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setCxcAction('devolucion_credito')}
+                      className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all ${
+                        cxcAction === 'devolucion_credito'
+                          ? 'bg-white text-slate-800 shadow-sm border border-slate-100'
+                          : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      Devolver Crédito
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Formulario según acción seleccionada */}
+              {puedeRegistrarAbono && cxcAction === 'abono' && saldo > 0 && (
                 <FormAbono
                   clienteId={cliente.id}
                   saldo={saldo}
                   onSuccess={(montoAbonado) => {
                     setSaldoLocal(prev => Math.max(0, (prev ?? saldo) - montoAbonado))
+                    refetch()
+                  }}
+                />
+              )}
+
+              {puedeRegistrarAbono && cxcAction === 'saldo_favor' && (
+                <FormSaldoFavor
+                  clienteId={cliente.id}
+                  onSuccess={() => {
+                    refetch()
+                  }}
+                />
+              )}
+
+              {puedeRegistrarAbono && cxcAction === 'devolucion_credito' && saldoFavor > 0 && (
+                <FormDevolucionCredito
+                  clienteId={cliente.id}
+                  saldoFavor={saldoFavor}
+                  onSuccess={(montoDevuelto) => {
+                    setSaldoFavorLocal(prev => Math.max(0, (prev ?? saldoFavor) - montoDevuelto))
                     refetch()
                   }}
                 />
@@ -584,18 +909,34 @@ export default function FichaClienteModal({ cliente, isOpen, onClose }) {
                       <div key={mov.id} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border ${
                         mov.tipo === 'cargo'
                           ? 'bg-red-50 border-red-100'
+                          : mov.tipo === 'credito'
+                          ? 'bg-blue-50 border-blue-100'
+                          : mov.tipo === 'devolucion_credito'
+                          ? 'bg-amber-50 border-amber-100'
                           : 'bg-emerald-50 border-emerald-100'
                       }`}>
-                        {mov.tipo === 'cargo'
-                          ? <ArrowUpCircle size={18} className="text-red-500 shrink-0" />
-                          : <ArrowDownCircle size={18} className="text-emerald-500 shrink-0" />
-                        }
+                        {mov.tipo === 'cargo' ? (
+                          <ArrowUpCircle size={18} className="text-red-500 shrink-0" />
+                        ) : mov.tipo === 'credito' ? (
+                          <ArrowDownCircle size={18} className="text-blue-500 shrink-0" />
+                        ) : mov.tipo === 'devolucion_credito' ? (
+                          <ArrowUpCircle size={18} className="text-amber-500 shrink-0" />
+                        ) : (
+                          <ArrowDownCircle size={18} className="text-emerald-500 shrink-0" />
+                        )}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5">
                             <p className="text-xs font-semibold text-slate-700 truncate">{mov.descripcion}</p>
                             {mov.metodo_pago === 'cod' && (
                               <span className="bg-blue-100 text-blue-800 text-[8.5px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider shrink-0 border border-blue-200">
                                 COD
+                              </span>
+                            )}
+                            {mov.tipo === 'abono' && mov.forma_pago_abono === 'Saldo a favor' && (
+                              <span className="bg-purple-100 text-purple-800 text-[8.5px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider shrink-0 border border-purple-200">
+                                {mov.referencia?.startsWith('Despacho')
+                                  ? `Compra ${mov.referencia.replace('Despacho ', '')}`
+                                  : 'Compra'}
                               </span>
                             )}
                           </div>
@@ -606,17 +947,27 @@ export default function FichaClienteModal({ cliente, isOpen, onClose }) {
                         </div>
                         <div className="text-right shrink-0 flex items-center gap-2">
                           <div>
-                            <p className={`text-sm font-black ${mov.tipo === 'cargo' ? 'text-red-600' : 'text-emerald-600'}`}>
-                              {mov.tipo === 'cargo' ? '+' : '-'}{fmtUsd(mov.monto_usd)}
+                            <p className={`text-sm font-black ${
+                              mov.tipo === 'cargo' 
+                                ? 'text-red-600' 
+                                : mov.tipo === 'credito' 
+                                ? 'text-blue-600' 
+                                : mov.tipo === 'devolucion_credito'
+                                ? 'text-amber-600'
+                                : 'text-emerald-600'
+                            }`}>
+                              {mov.tipo === 'cargo' || mov.tipo === 'devolucion_credito' ? '+' : '-'}{fmtUsd(mov.monto_usd)}
                             </p>
-                            <p className="text-[10px] text-slate-400">Saldo: {fmtUsd(mov.saldo_usd)}</p>
+                            <p className="text-[10px] text-slate-400">
+                              {(mov.tipo === 'credito' || mov.tipo === 'devolucion_credito') ? 'Crédito' : 'Saldo'}: {fmtUsd(mov.saldo_usd)}
+                            </p>
                           </div>
-                          {mov.tipo === 'abono' && puedeRevertirAbono && (
+                          {(mov.tipo === 'abono' || mov.tipo === 'credito' || mov.tipo === 'devolucion_credito') && puedeRevertirAbono && (
                             <button
                               type="button"
                               onClick={() => setAbonoARevertir(mov)}
                               className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors shrink-0"
-                              title="Revertir abono"
+                              title={mov.tipo === 'credito' ? "Revertir saldo a favor" : mov.tipo === 'devolucion_credito' ? "Revertir devolución" : "Revertir abono"}
                             >
                               <RotateCcw size={14} />
                             </button>
@@ -828,13 +1179,35 @@ export default function FichaClienteModal({ cliente, isOpen, onClose }) {
         onClose={() => setAbonoARevertir(null)}
         onConfirm={async () => {
           if (!abonoARevertir) return
-          await revertirMutation.mutateAsync({ abonoId: abonoARevertir.id })
-          setSaldoLocal(prev => (prev !== null ? prev : Number(cliente.saldo_pendiente || 0)) + Number(abonoARevertir.monto_usd))
+          try {
+            await revertirMutation.mutateAsync({ abonoId: abonoARevertir.id })
+            if (abonoARevertir.tipo === 'credito') {
+              setSaldoFavorLocal(prev => Math.max(0, (prev ?? Number(cliente.saldo_a_favor || 0)) - Number(abonoARevertir.monto_usd)))
+            } else if (abonoARevertir.tipo === 'devolucion_credito') {
+              setSaldoFavorLocal(prev => (prev ?? Number(cliente.saldo_a_favor || 0)) + Number(abonoARevertir.monto_usd))
+            } else {
+              setSaldoLocal(prev => (prev ?? Number(cliente.saldo_pendiente || 0)) + Number(abonoARevertir.monto_usd))
+            }
+          } catch (err) {
+            // Error handling if mutateAsync fails (usually handled inside the hook or via global toast)
+          }
           setAbonoARevertir(null)
         }}
-        title="¿Revertir abono?"
-        message={`¿Estás seguro de que deseas revertir este abono por valor de ${fmtUsd(abonoARevertir?.monto_usd)}?`}
-        details="Esta acción eliminará el abono y aumentará la deuda del cliente."
+        title={abonoARevertir?.tipo === 'credito' ? "¿Revertir saldo a favor?" : abonoARevertir?.tipo === 'devolucion_credito' ? "¿Revertir devolución?" : "¿Revertir abono?"}
+        message={
+          abonoARevertir?.tipo === 'credito'
+            ? `¿Estás seguro de que deseas revertir esta carga de crédito por valor de ${fmtUsd(abonoARevertir?.monto_usd)}?`
+            : abonoARevertir?.tipo === 'devolucion_credito'
+            ? `¿Estás seguro de que deseas revertir esta devolución de saldo a favor por valor de ${fmtUsd(abonoARevertir?.monto_usd)}?`
+            : `¿Estás seguro de que deseas revertir este abono por valor de ${fmtUsd(abonoARevertir?.monto_usd)}?`
+        }
+        details={
+          abonoARevertir?.tipo === 'credito'
+            ? "Esta acción eliminará el crédito de la cuenta del cliente."
+            : abonoARevertir?.tipo === 'devolucion_credito'
+            ? "Esta acción devolverá el monto al saldo a favor del cliente."
+            : "Esta acción eliminará el abono y aumentará la deuda del cliente."
+        }
         confirmText="Revertir"
         variant="danger"
       />

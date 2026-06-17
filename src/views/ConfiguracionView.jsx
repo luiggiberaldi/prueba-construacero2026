@@ -269,6 +269,24 @@ function ComisionesTab({ campos, cambiar, isLoading, cargando }) {
                 $1,000 → <strong>{fmtUsd(1000 * campos.comision_pct_otros / 100)}</strong>
               </p>
             </div>
+
+            {/* Tarjeta "Descuento de Personal" */}
+            <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl border border-indigo-200 p-4 space-y-3 shadow-sm hover:scale-[1.01] hover:shadow-md transition-all duration-300">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-indigo-500" />
+                <span className="text-xs font-bold text-indigo-700 uppercase tracking-wider">Descuento de Personal</span>
+              </div>
+              <p className="text-[11px] text-indigo-400 font-medium">Aplica un descuento por defecto a trabajadores de la empresa.</p>
+              <div className="flex items-baseline gap-2">
+                <input type="number" min="0" max="100" step="0.01"
+                  value={campos.descuento_personal_pct ?? 10.00}
+                  onFocus={selectOnFocus}
+                  onChange={e => cambiar('descuento_personal_pct', Math.max(0, Math.min(100, Number(e.target.value))))}
+                  className="w-20 px-3 py-2.5 rounded-xl border border-indigo-200 bg-white text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-right font-bold shadow-inner"
+                  disabled={disabled} />
+                <span className="text-lg font-bold text-indigo-500">%</span>
+              </div>
+            </div>
           </div>
 
           {/* Botón agregar categoría */}
@@ -588,6 +606,7 @@ export default function ConfiguracionView() {
     comision_ext_pct_otros:       3,
     comision_ext_pct_externos:    3,
     _comision_ext_extras:         [],
+    descuento_personal_pct:       10.00,
   })
   const [gatePassword, setGatePassword] = useState('')
 
@@ -614,6 +633,7 @@ export default function ConfiguracionView() {
         comision_ext_pct_otros:     config.comision_ext_pct_otros     ?? 3,
         comision_ext_pct_externos:  config.comision_ext_pct_externos  ?? 3,
         _comision_ext_extras:       config._comision_ext_extras       ?? [],
+        descuento_personal_pct:     config.descuento_personal_pct     ?? 10.00,
       })
     }
   }, [config])

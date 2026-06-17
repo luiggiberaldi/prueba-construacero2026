@@ -8,9 +8,8 @@ import useAuthStore from '../store/useAuthStore'
 import { buildSmartFilter, parseSearchTerms } from '../utils/smartSearch'
 import { showToast } from '../components/ui/Toast'
 import { MOVIMIENTOS_KEY } from './useMovimientosInventario'
-import { broadcastInventarioUpdate } from '../services/supabase/inventarioBroadcast'
+import { broadcastInventarioUpdate } from '../services/supabase/realtimeBus'
 import { authFetch } from '../services/authFetch'
-import { getLocalProductos } from '../lib/offlineSnapshots'
 
 export const INVENTARIO_KEY = ['inventario']
 
@@ -38,42 +37,13 @@ function getCategoryGroup(cat) {
 
 // ─── Lista de productos ───────────────────────────────────────────────────────
 export function useInventario({ busqueda = '', categoria = '', page = 0, pageSize = 100 } = {}) {
-  const { perfil, offline } = useAuthStore()
+  const { perfil } = useAuthStore()
   const esPrivilegiado = (perfil?.rol === 'supervisor' || perfil?.rol === 'jefe') || perfil?.rol === 'administracion' || perfil?.rol === 'desarrollador'
 
   return useQuery({
     queryKey: [...INVENTARIO_KEY, busqueda, categoria, esPrivilegiado, page, pageSize],
     queryFn: async () => {
       const isGroup = categoria ? CATEGORY_GROUPS.includes(categoria.toUpperCase().trim()) : false
-
-      if (offline) {
-        const localData = await getLocalProductos()
-        let result = localData
-
-        if (categoria) {
-          if (isGroup) {
-            result = result.filter(p => (p.categoria || '').toUpperCase().trim().startsWith(categoria.toUpperCase().trim()))
-          } else {
-            result = result.filter(p => (p.categoria || '').toUpperCase().trim() === categoria.toUpperCase().trim())
-          }
-        }
-
-        if (busqueda.trim()) {
-          const terms = parseSearchTerms(busqueda)
-          result = result.filter(p => {
-            const nom = (p.nombre || '').toLowerCase()
-            const cod = (p.codigo || '').toLowerCase()
-            const desc = (p.descripcion || '').toLowerCase()
-            const cat = (p.categoria || '').toLowerCase()
-            return terms.every(term =>
-              nom.includes(term) || cod.includes(term) || desc.includes(term) || cat.includes(term)
-            )
-          })
-        }
-
-        const paginated = result.slice(page * pageSize, (page + 1) * pageSize)
-        return { productos: paginated, totalCount: result.length }
-      }
 
       // Si hay texto de búsqueda, usamos el worker híbrido
       if (busqueda.trim() !== '') {
@@ -140,7 +110,7 @@ export function useInventario({ busqueda = '', categoria = '', page = 0, pageSiz
       return { productos, totalCount }
     },
     enabled: !!perfil,
-    staleTime: offline ? Infinity : 1000 * 30,         // 30s — permite refetch al volver de fondo
+    staleTime: 1000 * 30,         // 30s — permite refetch al volver de fondo
     gcTime:    1000 * 60 * 10,
   })
 }

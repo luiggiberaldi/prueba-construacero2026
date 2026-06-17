@@ -157,7 +157,7 @@ export default function DetalleModal({ isOpen, onClose, tipo = 'cotizacion', reg
 
   // Leer moneda seleccionada del PDF (compartida via localStorage)
   const monedaPdf = typeof window !== 'undefined'
-    ? (localStorage.getItem('construacero_moneda_pdf') || '$')
+    ? (localStorage.getItem('listopos_moneda_pdf') || '$')
     : '$'
 
   // Función de formato según moneda seleccionada (solo para cotizaciones)
@@ -564,14 +564,41 @@ export default function DetalleModal({ isOpen, onClose, tipo = 'cotizacion', reg
           const descuento = isPrestamoPuro ? 0 : Number(registro.descuento_total_usd || 0)
           const totalConServicios = isPrestamoPuro ? 0 : total // total_usd ya incluye el flete y corte
           const subtotal = isPrestamoPuro ? 0 : total - flete - corteDesc // total de productos sin flete ni corte
+
+          const clienteObj = registro.cliente_factura || registro.cliente
+          const esPersonal = clienteObj?.tipo_cliente === 'personal'
+          const descPersonalPct = esPersonal ? (config.descuento_personal_pct ?? 10.0) : 0
+
+          let subtotalOriginal = subtotal
+          let descuentoPersonal = 0
+
+          if (esPersonal && descPersonalPct > 0) {
+            let sumOriginal = 0
+            itemsConFallback.forEach(it => {
+              if (!it.es_prestamo) {
+                const cant = Number(it.cantidad || 0)
+                const precio = Number(it.precio_unit_usd || 0)
+                const precioOrig = Math.round((precio / (1 - descPersonalPct / 100)) * 100) / 100
+                sumOriginal += precioOrig * cant
+              }
+            })
+            subtotalOriginal = sumOriginal
+            descuentoPersonal = Math.max(0, subtotalOriginal - subtotal)
+          }
+
           const totalFinal = isPrestamoPuro ? 0 : totalConServicios - descuento
-          const hayDesglose = !isPrestamoPuro && (descuento > 0 || flete > 0 || corteDesc > 0)
+          const hayDesglose = !isPrestamoPuro && (descuento > 0 || flete > 0 || corteDesc > 0 || descuentoPersonal > 0)
 
           return (
           <div className="border-t border-slate-100 px-5 py-3 bg-slate-50 shrink-0 space-y-1.5">
             {hayDesglose && (
               <div className="flex justify-between text-xs text-slate-500">
-                <span>Subtotal</span><span>{fmtUsd(subtotal)}</span>
+                <span>Subtotal</span><span>{fmtUsd(subtotalOriginal)}</span>
+              </div>
+            )}
+            {descuentoPersonal > 0 && (
+              <div className="flex justify-between text-xs text-amber-600">
+                <span>Descuento Personal ({descPersonalPct}%)</span><span>-{fmtUsd(descuentoPersonal)}</span>
               </div>
             )}
             {descuento > 0 && (

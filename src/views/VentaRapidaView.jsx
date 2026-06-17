@@ -20,6 +20,7 @@ import { useConfigNegocio } from '../hooks/useConfigNegocio'
 import { calcComisionEstimada } from '../utils/comisionUtils'
 import { useTransportistas, useCrearTransportista } from '../hooks/useTransportistas'
 import { useFormasPago } from '../hooks/useFormasPago'
+import { useSaldoFavorOrigen } from '../hooks/useCuentasCobrar'
 import CustomSelect from '../components/ui/CustomSelect'
 import useAuthStore from '../store/useAuthStore'
 import supabase from '../services/supabase/client'
@@ -28,7 +29,7 @@ import { MapPin, Building } from 'lucide-react'
 import { apiUrl } from '../services/apiBase'
 import { round2, mulR } from '../utils/dinero'
 import { calcTotales } from '../utils/calcTotales'
-import { fmtUsdSimple as fmtUsd, fmtBs, usdToBs } from '../utils/format'
+import { fmtUsdSimple as fmtUsd, fmtBs, usdToBs, removeAccents } from '../utils/format'
 import { guardarProductoReciente, getProductosRecientes } from '../components/cotizaciones/ProductosRecientes'
 import { showToast } from '../components/ui/Toast'
 import PageHeader from '../components/ui/PageHeader'
@@ -46,7 +47,7 @@ function ModalVentaExitosa({ data, onClose, config }) {
   const [printLoading, setPrintLoading] = useState(false)
   const [showPdfMenu, setShowPdfMenu] = useState(false)
   const [showPrintMenu, setShowPrintMenu] = useState(false)
-  const [monedaPdf, setMonedaPdf] = useState(() => localStorage.getItem('construacero_moneda_pdf') || '$')
+  const [monedaPdf, setMonedaPdf] = useState(() => localStorage.getItem('listopos_moneda_pdf') || '$')
 
   const MONEDA_OPTIONS = [
     { key: '$', icon: <DollarSign size={12} className="text-emerald-500" />, label: 'USDT ($)' },
@@ -58,7 +59,7 @@ function ModalVentaExitosa({ data, onClose, config }) {
     return (
       <div className="border-b border-slate-100 pb-1 mb-1">
         {MONEDA_OPTIONS.map(opt => (
-          <button key={opt.key} onClick={() => { setMonedaPdf(opt.key); localStorage.setItem('construacero_moneda_pdf', opt.key) }}
+          <button key={opt.key} onClick={() => { setMonedaPdf(opt.key); localStorage.setItem('listopos_moneda_pdf', opt.key) }}
             className={`w-full flex items-center gap-2 px-3 py-1.5 text-[10px] text-left whitespace-nowrap ${monedaPdf === opt.key ? 'bg-slate-100 font-semibold text-slate-900' : 'text-slate-600 hover:bg-slate-50'}`}>
             {opt.icon} {opt.label}
             {monedaPdf === opt.key && <Check size={12} className="ml-auto text-emerald-500" />}
@@ -71,7 +72,7 @@ function ModalVentaExitosa({ data, onClose, config }) {
   if (!data) return null
 
   const { numero, despachoId, cotizacionId, clienteNombre, items, subtotal, totalUsd, totalBs, tasa, formasPago, transportista, flete, corte, notas } = data
-  const numDisplay = data._queued ? 'PENDIENTE (Offline)' : `VR-${String(numero).padStart(5, '0')}`
+  const numDisplay = `VR-${String(numero).padStart(5, '0')}`
   const totalConFlete = (totalUsd || 0) + (Number(flete) || 0) + (Number(corte) || 0)
 
   function printOrDownloadPdf(blob, filename) {
@@ -107,7 +108,7 @@ function ModalVentaExitosa({ data, onClose, config }) {
         body: JSON.stringify({ ids: [data.clienteId].filter(Boolean) }),
       }).then(r => r.ok ? r.json() : []),
       supabase.from('usuarios').select('id, nombre, color, telefono').eq('id', data.vendedorId).single(),
-      data.transportistaId ? supabase.from('transportistas').select('id, nombre, rif, telefono, vehiculo, placa_chuto, placa_batea, color, zona_cobertura, capacidad').eq('id', data.transportistaId).single() : Promise.resolve({ data: null }),
+      data.transportistaId ? supabase.from('transportistas').select('id, nombre, rif, telefono, vehiculo, placa_chuto, placa_batea, color, color_batea, zona_cobertura, capacidad').eq('id', data.transportistaId).single() : Promise.resolve({ data: null }),
     ])
     if (itemsRes.error) throw itemsRes.error
     const despachoObj = {
@@ -259,74 +260,64 @@ function ModalVentaExitosa({ data, onClose, config }) {
 
           {/* Acciones */}
           <div className="space-y-2">
-            {data._queued ? (
-              <div className="bg-amber-50 border border-amber-200 text-amber-800 text-[11px] rounded-xl p-3 text-left leading-relaxed">
-                <div className="flex items-center gap-1.5 font-bold mb-1 text-amber-900">
-                  <AlertCircle className="text-amber-600 shrink-0" size={14} />
-                  Guardado sin conexión
-                </div>
-                Esta venta se ha encolado localmente. La nota de entrega, orden de despacho e impresiones estarán disponibles una vez que recuperes la conexión y se sincronice el registro.
+            <div className="flex gap-2">
+              {/* Descargar con opciones */}
+              <div className="flex-1 relative">
+                <button onClick={() => { setShowPdfMenu(v => !v); setShowPrintMenu(false) }} disabled={pdfLoading}
+                  className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 font-semibold text-xs rounded-xl transition-all active:scale-[0.98] disabled:opacity-50">
+                  {pdfLoading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                  Descargar
+                </button>
+                {showPdfMenu && (
+                  <div className="absolute bottom-full left-0 right-0 mb-1 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-50 overflow-hidden">
+                    <MonedaSelector />
+                    <button onClick={() => handleDescargar('nota')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 flex items-center justify-between">
+                      <span><FileText size={12} className="inline mr-1.5 text-slate-400" />Nota de Entrega</span>
+                      <span className={`text-[9px] font-bold px-1 rounded ${monedaPdf === 'bs' ? 'text-blue-600 bg-blue-50' : monedaPdf === 'bcv' ? 'text-teal-600 bg-teal-50' : 'text-emerald-600 bg-emerald-50'}`}>
+                        {monedaPdf === 'bs' ? 'Bs' : monedaPdf === 'bcv' ? 'BCV' : '$'}
+                      </span>
+                    </button>
+                    <button onClick={() => handleDescargar('orden')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 flex items-center justify-between border-b border-slate-100">
+                      <span><Package size={12} className="inline mr-1.5 text-slate-400" />Orden de Despacho</span>
+                      <span className={`text-[9px] font-bold px-1 rounded ${monedaPdf === 'bs' ? 'text-blue-600 bg-blue-50' : monedaPdf === 'bcv' ? 'text-teal-600 bg-teal-50' : 'text-emerald-600 bg-emerald-50'}`}>
+                        {monedaPdf === 'bs' ? 'Bs' : monedaPdf === 'bcv' ? 'BCV' : '$'}
+                      </span>
+                    </button>
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="flex gap-2">
-                {/* Descargar con opciones */}
-                <div className="flex-1 relative">
-                  <button onClick={() => { setShowPdfMenu(v => !v); setShowPrintMenu(false) }} disabled={pdfLoading}
-                    className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 font-semibold text-xs rounded-xl transition-all active:scale-[0.98] disabled:opacity-50">
-                    {pdfLoading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                    Descargar
-                  </button>
-                  {showPdfMenu && (
-                    <div className="absolute bottom-full left-0 right-0 mb-1 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-50 overflow-hidden">
-                      <MonedaSelector />
-                      <button onClick={() => handleDescargar('nota')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 flex items-center justify-between">
-                        <span><FileText size={12} className="inline mr-1.5 text-slate-400" />Nota de Entrega</span>
-                        <span className={`text-[9px] font-bold px-1 rounded ${monedaPdf === 'bs' ? 'text-blue-600 bg-blue-50' : monedaPdf === 'bcv' ? 'text-teal-600 bg-teal-50' : 'text-emerald-600 bg-emerald-50'}`}>
-                          {monedaPdf === 'bs' ? 'Bs' : monedaPdf === 'bcv' ? 'BCV' : '$'}
-                        </span>
-                      </button>
-                      <button onClick={() => handleDescargar('orden')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 flex items-center justify-between border-b border-slate-100">
-                        <span><Package size={12} className="inline mr-1.5 text-slate-400" />Orden de Despacho</span>
-                        <span className={`text-[9px] font-bold px-1 rounded ${monedaPdf === 'bs' ? 'text-blue-600 bg-blue-50' : monedaPdf === 'bcv' ? 'text-teal-600 bg-teal-50' : 'text-emerald-600 bg-emerald-50'}`}>
-                          {monedaPdf === 'bs' ? 'Bs' : monedaPdf === 'bcv' ? 'BCV' : '$'}
-                        </span>
-                      </button>
-                    </div>
-                  )}
-                </div>
 
-                {/* Imprimir con opciones */}
-                <div className="flex-1 relative">
-                  <button onClick={() => { setShowPrintMenu(v => !v); setShowPdfMenu(false) }} disabled={printLoading}
-                    className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold text-xs rounded-xl transition-all active:scale-[0.98] disabled:opacity-50">
-                    {printLoading ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />}
-                    Imprimir
-                  </button>
-                  {showPrintMenu && (
-                    <div className="absolute bottom-full left-0 right-0 mb-1 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-50">
-                      <MonedaSelector />
-                      <button onClick={() => handleImprimir('nota')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 flex items-center justify-between">
-                        <span><FileText size={12} className="inline mr-1.5 text-slate-400" />Nota de entrega</span>
-                        <span className={`text-[9px] font-bold px-1 rounded ${monedaPdf === 'bs' ? 'text-blue-600 bg-blue-50' : monedaPdf === 'bcv' ? 'text-teal-600 bg-teal-50' : 'text-emerald-600 bg-emerald-50'}`}>
-                          {monedaPdf === 'bs' ? 'Bs' : monedaPdf === 'bcv' ? 'BCV' : '$'}
-                        </span>
-                      </button>
-                      <button onClick={() => handleImprimir('orden')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 flex items-center justify-between border-t border-slate-100">
-                        <span><Package size={12} className="inline mr-1.5 text-slate-400" />Orden de despacho</span>
-                        <span className={`text-[9px] font-bold px-1 rounded ${monedaPdf === 'bs' ? 'text-blue-600 bg-blue-50' : monedaPdf === 'bcv' ? 'text-teal-600 bg-teal-50' : 'text-emerald-600 bg-emerald-50'}`}>
-                          {monedaPdf === 'bs' ? 'Bs' : monedaPdf === 'bcv' ? 'BCV' : '$'}
-                        </span>
-                      </button>
-                    </div>
-                  )}
-                </div>
+              {/* Imprimir con opciones */}
+              <div className="flex-1 relative">
+                <button onClick={() => { setShowPrintMenu(v => !v); setShowPdfMenu(false) }} disabled={printLoading}
+                  className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold text-xs rounded-xl transition-all active:scale-[0.98] disabled:opacity-50">
+                  {printLoading ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />}
+                  Imprimir
+                </button>
+                {showPrintMenu && (
+                  <div className="absolute bottom-full left-0 right-0 mb-1 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-50">
+                    <MonedaSelector />
+                    <button onClick={() => handleImprimir('nota')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 flex items-center justify-between">
+                      <span><FileText size={12} className="inline mr-1.5 text-slate-400" />Nota de entrega</span>
+                      <span className={`text-[9px] font-bold px-1 rounded ${monedaPdf === 'bs' ? 'text-blue-600 bg-blue-50' : monedaPdf === 'bcv' ? 'text-teal-600 bg-teal-50' : 'text-emerald-600 bg-emerald-50'}`}>
+                        {monedaPdf === 'bs' ? 'Bs' : monedaPdf === 'bcv' ? 'BCV' : '$'}
+                      </span>
+                    </button>
+                    <button onClick={() => handleImprimir('orden')} className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700 flex items-center justify-between border-t border-slate-100">
+                      <span><Package size={12} className="inline mr-1.5 text-slate-400" />Orden de despacho</span>
+                      <span className={`text-[9px] font-bold px-1 rounded ${monedaPdf === 'bs' ? 'text-blue-600 bg-blue-50' : monedaPdf === 'bcv' ? 'text-teal-600 bg-teal-50' : 'text-emerald-600 bg-emerald-50'}`}>
+                        {monedaPdf === 'bs' ? 'Bs' : monedaPdf === 'bcv' ? 'BCV' : '$'}
+                      </span>
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
+            </div>
 
             <button onClick={onClose}
               className="w-full py-3 text-white font-bold text-xs rounded-xl transition-all shadow-lg hover:shadow-xl active:scale-[0.98] flex items-center justify-center gap-2"
               style={{ background: 'linear-gradient(135deg, #1B365D, #B8860B)' }}>
-              <ArrowRight size={14} /> {data._queued ? 'Entendido' : 'Ir a Despachos'}
+              <ArrowRight size={14} /> Ir a Despachos
             </button>
           </div>
         </div>
@@ -336,7 +327,7 @@ function ModalVentaExitosa({ data, onClose, config }) {
 }
 
 // ─── Draft (retomar) helpers ──────────────────────────────────────────────────
-const VR_DRAFT_KEY = 'construacero_venta_rapida_draft'
+const VR_DRAFT_KEY = 'listopos_venta_rapida_draft'
 
 function getDraftKey(userId) {
   const state = useAuthStore.getState()
@@ -402,19 +393,46 @@ export default function VentaRapidaView() {
   const { data: transportistas = [] } = useTransportistas()
   const tasaHook = useTasaCambio()
   const ventaRapida = useVentaRapida()
+  // Step 1: Cliente + Productos
+  const [clienteId, setClienteId] = useState('')
+  const clienteSeleccionado = clientes.find(c => c.id === clienteId)
+
+  const { data: saldoFavorOrigen } = useSaldoFavorOrigen(clienteId)
 
   // Wizard step: 0=productos, 1=pago, 2=confirmar
   const [step, setStep] = useState(0)
 
-  // Step 1: Cliente + Productos
-  const [clienteId, setClienteId] = useState('')
   const [clienteBusqueda, setClienteBusqueda] = useState('')
   const [clienteOpen, setClienteOpen] = useState(false)
   const [productoBusqueda, setProductoBusqueda] = useState('')
   const [catActiva, setCatActiva] = useState('')
-  const { items, setItems, agregarItem: _agregarItem, eliminarPorId: quitarItem, cambiarCantidad, setCantidadDirecta, cambiarPrecio, togglePrestamo, setStockMap } = useLineItems({ checkStock: true })
+  const { items, setItems, agregarItem: _agregarItem, eliminarPorId: quitarItem, cambiarCantidad, setCantidadDirecta, cambiarPrecio: _cambiarPrecio, togglePrestamo, setStockMap } = useLineItems({ checkStock: true })
   const [editItemIdx, setEditItemIdx] = useState(null)
   const comisionEstimada = useMemo(() => calcComisionEstimada(items, config, perfil), [items, config, perfil])
+
+  const cambiarPrecio = useCallback((productoId, precio) => {
+    const precioUnit = parseFloat(String(precio)) || 0
+    _cambiarPrecio(productoId, precioUnit, precioUnit)
+  }, [_cambiarPrecio])
+
+  const prevClienteIdRef = useRef(clienteId)
+
+  useEffect(() => {
+    if (!clientes.length || !config) return
+
+    const prevId = prevClienteIdRef.current
+    if (prevId === clienteId) return
+    prevClienteIdRef.current = clienteId
+
+    const prevCli = clientes.find(c => c.id === prevId)
+    const nextCli = clientes.find(c => c.id === clienteId)
+    const prevEsPersonal = prevCli?.tipo_cliente === 'personal'
+    const nextEsPersonal = nextCli?.tipo_cliente === 'personal'
+
+    if (prevEsPersonal === nextEsPersonal) return
+
+    showToast(nextEsPersonal ? 'Cliente personal seleccionado: descuento de personal se aplicará en totales' : 'Descuento de personal removido', 'info')
+  }, [clienteId, clientes, config])
 
   // Mantener stock map actualizado para validación de cantidades
   useEffect(() => {
@@ -480,6 +498,7 @@ export default function VentaRapidaView() {
   const [direccionEnvioEstado, setDireccionEnvioEstado] = useState('')
   const [direccionEnvioCiudad, setDireccionEnvioCiudad] = useState('')
   const [direccionEnvioDireccion, setDireccionEnvioDireccion] = useState('')
+  const [vueltoComoSaldoFavor, setVueltoComoSaldoFavor] = useState(false)
 
   const clienteRef = useRef(null)
   const productoInputRef = useRef(null)
@@ -564,7 +583,12 @@ export default function VentaRapidaView() {
   }
 
   const costoEnvioUsd = 0
-  const { subtotal, totalUsd } = calcTotales(items, 0, costoEnvioUsd)
+  const { subtotal, totalUsd: rawTotalUsd } = calcTotales(items, 0, costoEnvioUsd)
+  const esPersonal = clienteSeleccionado?.tipo_cliente === 'personal'
+  const descPct = config?.descuento_personal_pct ?? 10.00
+  const descuentoMonto = esPersonal ? round2(subtotal * (descPct / 100)) : 0
+  const totalUsd = esPersonal ? round2(subtotal - descuentoMonto) : rawTotalUsd
+
   const tasa = tasaHook.tasaEfectiva || 0
   const totalBs = tasa > 0 ? mulR(totalUsd, tasa) : 0
   const flete = Math.max(0, Number(fleteUsd) || 0)
@@ -581,6 +605,8 @@ export default function VentaRapidaView() {
     resetFormas: resetPagosInmediatos,
     totalAsignado: totalInmediato,
     pagoCuadrado: pagoInmediatoCuadrado,
+    hayVuelto: pagosInmediatosHayVuelto,
+    diferencia: pagosInmediatosDiferencia,
   } = useFormasPago(totalConFlete)
 
   // El monto COD requerido es el total restante
@@ -603,9 +629,17 @@ export default function VentaRapidaView() {
     if (esPrestamoPuro) {
       return [{ metodo: "Préstamo", monto: 0.00, diasVencimiento: 0 }]
     }
+
+    const inyectarVuelto = (fps) => {
+      if (pagosInmediatosHayVuelto && vueltoComoSaldoFavor) {
+        return fps.map((fp, i) => i === 0 ? { ...fp, vuelto_a_favor: true } : fp)
+      }
+      return fps
+    }
+
     if (esCod) {
       return [
-        ...pagosInmediatos,
+        ...inyectarVuelto(pagosInmediatos),
         {
           metodo: "Cobro a destino",
           monto: montoCodRequerido,
@@ -615,9 +649,9 @@ export default function VentaRapidaView() {
         }
       ]
     } else {
-      return pagosInmediatos
+      return inyectarVuelto(pagosInmediatos)
     }
-  }, [esPrestamoPuro, esCod, pagosInmediatos, propuestaCod, totalConFlete, totalInmediato, montoCodRequerido])
+  }, [esPrestamoPuro, esCod, pagosInmediatos, propuestaCod, totalConFlete, totalInmediato, montoCodRequerido, pagosInmediatosHayVuelto, vueltoComoSaldoFavor])
 
   const handleToggleCod = () => {
     setEsCod(prev => {
@@ -649,7 +683,6 @@ export default function VentaRapidaView() {
   }, [step, clienteId, items, formasPagoFinales, referenciaPago, transportistaId, fleteUsd, corteUsd, notas, esCod, ventaRapida.isPending])
 
   const idsAgregados = new Set(items.map(it => it.productoId))
-  const clienteSeleccionado = clientes.find(c => c.id === clienteId)
 
   const preciosMap = useMemo(() => {
     const m = {}
@@ -711,9 +744,10 @@ export default function VentaRapidaView() {
     })
 
     if (!clienteBusqueda.trim()) return ordenados.slice(0, 8)
+    const q = removeAccents(clienteBusqueda.toLowerCase())
     return ordenados.filter(c =>
-      c.nombre.toLowerCase().includes(clienteBusqueda.toLowerCase()) ||
-      (c.rif_cedula ?? '').toLowerCase().includes(clienteBusqueda.toLowerCase()) ||
+      removeAccents(c.nombre.toLowerCase()).includes(q) ||
+      removeAccents((c.rif_cedula ?? '').toLowerCase()).includes(q) ||
       (c.telefono ?? '').includes(clienteBusqueda)
     ).slice(0, 8)
   }, [clientes, clienteBusqueda, clienteId, perfil?.id])
@@ -738,12 +772,13 @@ export default function VentaRapidaView() {
 
   function agregarProducto(p) {
     guardarProductoReciente(perfil?.id, p)
-    const precioBase = Number(p.precio_usd || p.preciousd || 0)
-    const precioConMarkup = aplicarMarkup(precioBase)
+    const precioBase = aplicarMarkup(Number(p.precio_usd || p.preciousd || 0))
+
     _agregarItem({
       ...p,
-      precio_usd: precioConMarkup,
-      preciousd: precioConMarkup
+      precio_usd: precioBase,
+      preciousd: precioBase,
+      precioOriginalUsd: precioBase
     })
   }
 
@@ -751,11 +786,13 @@ export default function VentaRapidaView() {
   async function handleSubmit() {
     if (!step1Valid || !step2Valid) return
     const fpJson = JSON.stringify(formasPagoFinales)
+    
+    const esPersonal = clienteSeleccionado?.tipo_cliente === 'personal'
+    const descPct = config.descuento_personal_pct ?? 10.00
+
     ventaRapida.mutate({
       clienteId,
       clienteNombre: clienteSeleccionado?.nombre,
-      vendedorId: clienteSeleccionado?.vendedor_id || perfil?.id,
-      vendedorNombre: clienteSeleccionado?.vendedor?.nombre || perfil?.nombre,
       transportistaId: transportistaId || null,
       fleteUsd: flete,
       corteUsd: corte,
@@ -764,17 +801,21 @@ export default function VentaRapidaView() {
       referenciaPago: referenciaPago || null,
       notas,
       notasCliente: null,
-      items: items.map(it => ({
-        productoId: it.productoId,
-        cantidad: it.cantidad,
-        precioUnitUsd: it.precioUnitUsd,
-        descuentoPct: 0,
-        nombreSnap: it.nombreSnap,
-        unidadSnap: it.unidadSnap,
-        codigoSnap: it.codigoSnap,
-        origen: it.origen,
-        es_prestamo: it.esPrestamo || false,
-      })),
+      items: items.map(it => {
+        const precioUnit = it.precioUnitUsd
+        const precioFinal = esPersonal ? round2(precioUnit * (1 - descPct / 100)) : precioUnit
+        return {
+          productoId: it.productoId,
+          cantidad: it.cantidad,
+          precioUnitUsd: precioFinal,
+          descuentoPct: 0,
+          nombreSnap: it.nombreSnap,
+          unidadSnap: it.unidadSnap,
+          codigoSnap: it.codigoSnap,
+          origen: it.origen,
+          es_prestamo: it.esPrestamo || false,
+        }
+      }),
       costoEnvioUsd,
       tasaBcv: tasa,
       direccionEnvioDireccion: direccionEnvioActiva ? direccionEnvioDireccion : null,
@@ -790,7 +831,7 @@ export default function VentaRapidaView() {
           cotizacionId: result.cotizacionId,
           clienteId: clienteId,
           clienteNombre: clienteSeleccionado?.nombre,
-          vendedorId: clienteSeleccionado?.vendedor_id || perfil?.id,
+          vendedorId: perfil?.id,
           transportistaId: transportistaId || null,
           transportista: transportistaSeleccionado?.nombre || null,
           flete,
@@ -804,7 +845,6 @@ export default function VentaRapidaView() {
           tasaBcv: tasaHook.tasaBcv?.precio || 0,
           formasPago: formasPagoFinales,
           notas,
-          _queued: result._queued,
         })
         // Reset form
         setStep(0)
@@ -957,6 +997,7 @@ export default function VentaRapidaView() {
       <div className="flex-1 min-h-0 flex flex-col">
         {step === 0 && (
           <Step1Productos
+            config={config}
             clienteRef={clienteRef}
             clienteId={clienteId}
             clienteSeleccionado={clienteSeleccionado}
@@ -990,6 +1031,8 @@ export default function VentaRapidaView() {
             quitarItem={quitarItem}
             preciosMap={preciosMap}
             totalItems={totalItems}
+            subtotal={subtotal}
+            descuentoMonto={descuentoMonto}
             totalUsd={totalUsd}
             totalBs={totalBs}
             tasa={tasa}
@@ -1048,11 +1091,19 @@ export default function VentaRapidaView() {
             setDireccionEnvioCiudad={setDireccionEnvioCiudad}
             direccionEnvioDireccion={direccionEnvioDireccion}
             setDireccionEnvioDireccion={setDireccionEnvioDireccion}
+            saldoFavorOrigen={saldoFavorOrigen}
+            vueltoComoSaldoFavor={vueltoComoSaldoFavor}
+            pagosInmediatosHayVuelto={pagosInmediatosHayVuelto}
+            pagosInmediatosDiferencia={pagosInmediatosDiferencia}
+            config={config}
+            subtotal={subtotal}
+            descuentoMonto={descuentoMonto}
           />
         )}
 
         {step === 2 && (
           <Step3Confirmar
+            config={config}
             clienteSeleccionado={clienteSeleccionado}
             items={items}
             subtotal={subtotal}
@@ -1201,6 +1252,7 @@ function SwipeToDelete({ children, enabled, onDelete }) {
 // Step 1: Cliente + Productos
 // ─────────────────────────────────────────────────────────────────────────────
 function Step1Productos({
+  config,
   clienteRef, clienteId, clienteSeleccionado, clienteBusqueda, setClienteBusqueda,
   clienteOpen, setClienteOpen, clientesFiltrados, elegirCliente, setClienteId,
   confirmAjeno, setConfirmAjeno, esSupervisor,
@@ -1209,7 +1261,7 @@ function Step1Productos({
   categorias, catActiva, setCatActiva,
   productosFiltrados, recientes, idsAgregados, agregarProducto,
   items, cambiarCantidad, setCantidadDirecta, cambiarPrecio, quitarItem,
-  totalItems, totalUsd, totalBs, tasa,
+  totalItems, subtotal, descuentoMonto, totalUsd, totalBs, tasa,
   mobileCartOpen, setMobileCartOpen,
   step1Valid, onSiguiente,
   preciosMap = {},
@@ -1389,6 +1441,11 @@ function Step1Productos({
             <User size={14} className="shrink-0" style={{ color: clienteSeleccionado.vendedor?.color || '#10b981' }} />
             <p className="font-medium text-sm truncate" style={{ color: clienteSeleccionado.vendedor?.color || '#1e293b' }}>{clienteSeleccionado.nombre}</p>
             {clienteSeleccionado.rif_cedula && <span className="text-xs text-slate-400">{clienteSeleccionado.rif_cedula}</span>}
+            {clienteSeleccionado?.tipo_cliente === 'personal' && (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200 shrink-0">
+                Personal ({config?.descuento_personal_pct ?? 10}%)
+              </span>
+            )}
             <button onClick={() => setClienteId('')} className="ml-auto p-1 rounded-lg hover:bg-slate-100">
               <X size={14} className="text-slate-400" />
             </button>
@@ -1669,12 +1726,29 @@ function Step1Productos({
               })}
             </div>
             <div className="shrink-0 border-t border-slate-200 p-3 space-y-2 bg-white">
-              <div className="flex justify-between items-end px-1">
-                <div>
-                  <span className="text-[12px] font-black text-slate-400 uppercase tracking-wider">Subtotal</span>
-                  {tasa > 0 && <p className="text-[11px] text-slate-400 mt-0.5">{fmtBs(totalBs)}</p>}
+              {clienteSeleccionado?.tipo_cliente === 'personal' && (
+                <p className="text-[10px] text-amber-600 font-semibold bg-amber-50 border border-amber-100 px-2 py-1 rounded-lg">
+                  * Descuento automático de personal ({config?.descuento_personal_pct ?? 10}%) se aplicará en el total.
+                </p>
+              )}
+              <div className="space-y-1.5 px-1">
+                <div className="flex justify-between text-xs text-slate-500">
+                  <span>Subtotal</span>
+                  <span>{fmtUsd(subtotal)}</span>
                 </div>
-                <span className="text-xl font-black text-slate-800">{fmtUsd(totalUsd)}</span>
+                {clienteSeleccionado?.tipo_cliente === 'personal' && (
+                  <div className="flex justify-between text-xs text-amber-700 font-medium">
+                    <span>Descuento Personal ({config?.descuento_personal_pct ?? 10}%)</span>
+                    <span>-{fmtUsd(descuentoMonto)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between items-end border-t border-slate-100 pt-1.5">
+                  <div>
+                    <span className="text-[12px] font-black text-slate-600 uppercase tracking-wider">Total</span>
+                    {tasa > 0 && <p className="text-[11px] text-slate-400 mt-0.5">{fmtBs(totalBs)}</p>}
+                  </div>
+                  <span className="text-xl font-black text-slate-800">{fmtUsd(totalUsd)}</span>
+                </div>
               </div>
               <button type="button"
                 onClick={() => { if (step1Valid) onSiguiente() }}
@@ -1904,12 +1978,29 @@ function Step1Productos({
             </div>
             {/* Footer */}
             <div className="border-t border-slate-200 p-3 pb-6 space-y-2 bg-white">
-              <div className="flex justify-between items-end px-1">
-                <div>
-                  <span className="text-[12px] font-black text-slate-400 uppercase tracking-wider">Subtotal</span>
-                  {tasa > 0 && <p className="text-[11px] text-slate-400 mt-0.5">{fmtBs(totalBs)}</p>}
+              {clienteSeleccionado?.tipo_cliente === 'personal' && (
+                <p className="text-[10px] text-amber-600 font-semibold bg-amber-50 border border-amber-100 px-2 py-1 rounded-lg">
+                  * Descuento automático de personal ({config?.descuento_personal_pct ?? 10}%) se aplicará en el total.
+                </p>
+              )}
+              <div className="space-y-1.5 px-1">
+                <div className="flex justify-between text-xs text-slate-500">
+                  <span>Subtotal</span>
+                  <span>{fmtUsd(subtotal)}</span>
                 </div>
-                <span className="text-xl font-black text-slate-800">{fmtUsd(totalUsd)}</span>
+                {clienteSeleccionado?.tipo_cliente === 'personal' && (
+                  <div className="flex justify-between text-xs text-amber-700 font-medium">
+                    <span>Descuento Personal ({config?.descuento_personal_pct ?? 10}%)</span>
+                    <span>-{fmtUsd(descuentoMonto)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between items-end border-t border-slate-100 pt-1.5">
+                  <div>
+                    <span className="text-[12px] font-black text-slate-600 uppercase tracking-wider">Total</span>
+                    {tasa > 0 && <p className="text-[11px] text-slate-400 mt-0.5">{fmtBs(totalBs)}</p>}
+                  </div>
+                  <span className="text-xl font-black text-slate-800">{fmtUsd(totalUsd)}</span>
+                </div>
               </div>
               <button type="button"
                 onClick={() => { setSheetOpen(false); if (step1Valid) onSiguiente() }}
@@ -1945,8 +2036,15 @@ function Step2Pago({
   direccionEnvioActiva, setDireccionEnvioActiva,
   direccionEnvioEstado, setDireccionEnvioEstado,
   direccionEnvioCiudad, setDireccionEnvioCiudad,
-  direccionEnvioDireccion, setDireccionEnvioDireccion
+  direccionEnvioDireccion, setDireccionEnvioDireccion,
+  saldoFavorOrigen,
+  vueltoComoSaldoFavor, setVueltoComoSaldoFavor,
+  pagosInmediatosHayVuelto, pagosInmediatosDiferencia,
+  config, subtotal, descuentoMonto
 }) {
+  const esPersonal = clienteSeleccionado?.tipo_cliente === 'personal'
+  const descPct = config?.descuento_personal_pct ?? 10.00
+
   const [showNuevoTransp, setShowNuevoTransp] = useState(false)
   const crearTransp = useCrearTransportista()
   const [transpError, setTranspError] = useState('')
@@ -1957,6 +2055,48 @@ function Step2Pago({
     (clienteSeleccionado?.vendedor_id === perfil?.id && perfil?.rol === 'vendedor_sin_comision');
 
   const totalConFlete = totalParaPago + Math.max(0, Number(fleteUsd) || 0)
+
+  const handleTogglePagoInmediato = (metodo) => {
+    if (metodo === 'Saldo a Favor') {
+      const active = pagosInmediatos.some(f => f.metodo === 'Saldo a Favor')
+      if (!active) {
+        togglePagoInmediato('Saldo a Favor')
+        setTimeout(() => {
+          const available = Number(clienteSeleccionado?.saldo_a_favor || 0)
+          const actualAsignado = pagosInmediatos.reduce((s, fp) => s + (Number(fp.monto) || 0), 0)
+          const restante = totalConFlete - actualAsignado
+          const montoInicial = Math.min(restante > 0 ? restante : 0, available)
+          updatePagoInmediato('Saldo a Favor', {
+            monto: Number(montoInicial.toFixed(2)) || '',
+            forma_pago_origen: saldoFavorOrigen || 'Crédito'
+          })
+        }, 50)
+        return
+      }
+    }
+    togglePagoInmediato(metodo)
+  }
+
+  const handleSetMontoPagoInmediato = (metodo, val) => {
+    if (metodo === 'Saldo a Favor') {
+      const maxVal = Number(clienteSeleccionado?.saldo_a_favor || 0)
+      let numVal = Number(val)
+      if (numVal > maxVal) {
+        val = String(maxVal)
+      }
+    }
+    if (metodo === 'Cta por cobrar') {
+      const sumOthers = pagosInmediatos
+        .filter(p => p.metodo !== 'Cta por cobrar')
+        .reduce((sum, p) => sum + (Number(p.monto) || 0), 0)
+      const maxVal = Math.max(0, totalConFlete - sumOthers)
+      let numVal = Number(val)
+      if (numVal > maxVal) {
+        val = String(maxVal)
+      }
+    }
+    setMontoPagoInmediato(metodo, val)
+  }
 
   async function handleCrearTransportista(campos) {
     setTranspError('')
@@ -1982,7 +2122,7 @@ function Step2Pago({
             <div className="flex-1 min-w-0">
               <CustomSelect 
                 value={transportistaId} 
-                onChange={setTransportistaId} 
+                onChange={v => { setTransportistaId(v); if (!v) setFleteUsd(''); }} 
                 placeholder="— Sin transportista —" 
                 clearable 
                 icon={Truck}
@@ -2088,27 +2228,40 @@ function Step2Pago({
                     return (
                       <div key={fp.metodo} className="space-y-2">
                         <div className="flex items-center gap-2 bg-sky-50 border border-sky-300 rounded-xl px-3 py-2">
-                          <span className="text-sm font-bold text-sky-700 w-32 shrink-0 truncate">{fp.metodo}</span>
+                          <span className="text-sm font-bold text-sky-700 w-32 shrink-0 truncate">
+                            {fp.metodo === 'Saldo a Favor'
+                              ? `Saldo a Favor (${(fp.forma_pago_origen || 'Crédito').toUpperCase()})`
+                              : fp.metodo}
+                          </span>
                           <div className="relative flex-1 flex items-center">
                             <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-medium">$</span>
                             <input
                               type="number" min="0" step="0.01"
                               value={fp.monto}
-                              onChange={e => setMontoPagoInmediato(fp.metodo, e.target.value)}
+                              onChange={e => handleSetMontoPagoInmediato(fp.metodo, e.target.value)}
                               onFocus={e => e.target.select()}
                               placeholder="0.00"
                               className="w-full pl-6 pr-2 py-1.5 rounded-lg text-sm font-semibold border border-sky-200 bg-white focus:outline-none focus:ring-2 focus:ring-sky-300 text-slate-800"
                             />
                             {restante > 0.01 && (
                               <button type="button"
-                                onClick={() => setMontoPagoInmediato(fp.metodo, Number(((Number(fp.monto) || 0) + restante).toFixed(2)))}
+                                onClick={() => {
+                                  let amountToAssign = (Number(fp.monto) || 0) + restante
+                                  if (fp.metodo === 'Saldo a Favor') {
+                                    const available = Number(clienteSeleccionado?.saldo_a_favor || 0)
+                                    if (amountToAssign > available) {
+                                      amountToAssign = available
+                                    }
+                                  }
+                                  handleSetMontoPagoInmediato(fp.metodo, Number(amountToAssign.toFixed(2)))
+                                }}
                                 className="ml-1.5 px-2 py-1 text-[10px] font-bold text-emerald-700 bg-emerald-100 hover:bg-emerald-200 rounded-lg transition-colors shrink-0"
                                 title={`Completar con $${restante.toFixed(2)} restante`}>
                                 Restante
                               </button>
                             )}
                           </div>
-                          <button type="button" onClick={() => togglePagoInmediato(fp.metodo)}
+                          <button type="button" onClick={() => handleTogglePagoInmediato(fp.metodo)}
                             className="p-1 rounded-lg hover:bg-sky-100 text-sky-400 hover:text-sky-600 transition-colors shrink-0">
                             <X size={14} />
                           </button>
@@ -2137,28 +2290,90 @@ function Step2Pago({
                             />
                           </div>
                         )}
+
+                        {/* Opción de Referencia para Transferencia y Pago Móvil */}
+                        {['Transf. / Pago Móvil', 'Transferencia', 'Pago Móvil'].includes(fp.metodo) && (
+                          <div className="flex items-center gap-2 px-3 py-1.5 bg-teal-50/50 border border-teal-200/50 rounded-lg ml-6">
+                            <span className="text-[11px] font-semibold text-teal-700 whitespace-nowrap">
+                              Referencia (opcional):
+                            </span>
+                            <input
+                              type="text"
+                              value={fp.referencia ?? ''}
+                              onChange={e => updatePagoInmediato(fp.metodo, { referencia: e.target.value })}
+                              placeholder="Ej: 12345"
+                              className="flex-1 px-2.5 py-1 rounded border border-teal-200 bg-white focus:outline-none focus:ring-2 focus:ring-teal-300 text-slate-800 text-xs font-medium"
+                            />
+                          </div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
 
                 {/* Chips para agregar métodos de pago inmediato */}
-                {FORMAS_PAGO.filter(m => m !== 'Cobro a destino' && (m !== 'Donación' || perfil?.rol !== 'vendedor'))
-                  .some(m => !pagosInmediatos.some(f => f.metodo === m)) && (
-                  <div className="flex flex-wrap gap-2">
-                    {FORMAS_PAGO.filter(m => m !== 'Cobro a destino' && (m !== 'Donación' || perfil?.rol !== 'vendedor'))
-                      .filter(m => !pagosInmediatos.some(f => f.metodo === m))
-                      .map(m => (
-                        <button key={m} type="button" onClick={() => togglePagoInmediato(m)}
-                          className="px-3.5 py-1.5 rounded-xl text-xs font-bold border border-slate-200 bg-white text-slate-600 hover:border-sky-300 hover:text-sky-600 transition-all duration-200 shadow-sm active:scale-95">
-                          {m}
-                        </button>
-                      ))}
-                  </div>
-                )}
+                <div className="flex flex-wrap gap-2">
+                  {/* Chip especial para Saldo a Favor */}
+                  {Number(clienteSeleccionado?.saldo_a_favor || 0) > 0 && !pagosInmediatos.some(f => f.metodo === 'Saldo a Favor') && (
+                    <button
+                      type="button"
+                      onClick={() => handleTogglePagoInmediato('Saldo a Favor')}
+                      className="px-3.5 py-1.5 rounded-xl text-xs font-black border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 transition-all duration-200 shadow-sm active:scale-95 flex items-center gap-1"
+                    >
+                      <DollarSign size={13} />
+                      Saldo a Favor (${Number(clienteSeleccionado.saldo_a_favor).toFixed(2)})
+                    </button>
+                  )}
+
+                  {FORMAS_PAGO.filter(m => m !== 'Cobro a destino' && (m !== 'Donación' || perfil?.rol !== 'vendedor'))
+                    .filter(m => m !== 'Saldo a Favor')
+                    .filter(m => !pagosInmediatos.some(f => f.metodo === m))
+                    .map(m => (
+                      <button key={m} type="button" onClick={() => handleTogglePagoInmediato(m)}
+                        className="px-3.5 py-1.5 rounded-xl text-xs font-bold border border-slate-200 bg-white text-slate-600 hover:border-sky-300 hover:text-sky-600 transition-all duration-200 shadow-sm active:scale-95">
+                        {m}
+                      </button>
+                    ))}
+                </div>
 
                 {esCod && pagosInmediatos.length === 0 && (
                   <p className="text-xs text-slate-400 italic">No se registraron adelantos inmediatos.</p>
+                )}
+
+                {/* Banner de Vuelto / Excedente a Saldo a Favor */}
+                {pagosInmediatosHayVuelto && (
+                  <div className="mt-4 bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm animate-in fade-in duration-200">
+                    <div className="flex items-start gap-2.5">
+                      <span className="p-1.5 rounded-lg bg-indigo-100 text-indigo-600 shrink-0 mt-0.5">
+                        <DollarSign size={16} />
+                      </span>
+                      <div>
+                        <span className="text-xs font-black text-indigo-900 block">
+                          El pago supera el total por ${pagosInmediatosDiferencia.toFixed(2)}
+                        </span>
+                        <span className="text-[10px] text-indigo-600 font-bold leading-normal">
+                          ¿Qué deseas hacer con la diferencia? {tasa > 0 && `(Equivale a ${fmtBs(pagosInmediatosDiferencia * tasa)})`}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2.5 self-end sm:self-center shrink-0">
+                      <span className="text-[11px] font-bold text-slate-500">Vuelto Físico</span>
+                      <button
+                        type="button"
+                        onClick={() => setVueltoComoSaldoFavor(!vueltoComoSaldoFavor)}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          vueltoComoSaldoFavor ? 'bg-indigo-600' : 'bg-slate-200'
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                            vueltoComoSaldoFavor ? 'translate-x-5' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                      <span className="text-[11px] font-black text-indigo-700">Saldo a Favor</span>
+                    </div>
+                  </div>
                 )}
               </div>
 
@@ -2208,6 +2423,21 @@ function Step2Pago({
                                   <X size={14} />
                                 </button>
                               </div>
+                              {/* Opción de Referencia para Transferencia y Pago Móvil (COD) */}
+                              {['Transf. / Pago Móvil', 'Transferencia', 'Pago Móvil'].includes(fp.metodo) && (
+                                <div className="flex items-center gap-2 px-3 py-1.5 bg-rose-50/50 border border-rose-200/50 rounded-lg ml-6 mt-1.5">
+                                  <span className="text-[11px] font-semibold text-rose-700 whitespace-nowrap">
+                                    Referencia (opcional):
+                                  </span>
+                                  <input
+                                    type="text"
+                                    value={fp.referencia ?? ''}
+                                    onChange={e => updatePropuestaCod(fp.metodo, { referencia: e.target.value })}
+                                    placeholder="Ej: 12345"
+                                    className="flex-1 px-2.5 py-1 rounded border border-rose-200 bg-white focus:outline-none focus:ring-2 focus:ring-rose-300 text-slate-800 text-xs font-medium"
+                                  />
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -2328,8 +2558,14 @@ function Step2Pago({
           <div className="space-y-2 text-[15px]">
             <div className="flex justify-between items-center text-slate-500">
               <span>Subtotal</span>
-            <span className="text-slate-700">${(totalParaPago - Math.max(0, Number(corteUsd) || 0)).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          </div>
+              <span className="text-slate-700">${(esPersonal ? subtotal : (totalParaPago - Math.max(0, Number(corteUsd) || 0))).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            {esPersonal && (
+              <div className="flex justify-between items-center text-amber-700 font-medium">
+                <span>Descuento Personal ({descPct}%)</span>
+                <span>-${descuentoMonto.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+            )}
           {Number(fleteUsd) > 0 && (
             <div className="flex justify-between items-center text-slate-500">
               <span>Flete</span>
@@ -2586,8 +2822,12 @@ function TransportistaFormCompact({ onGuardar, onCancelar, cargando }) {
 function Step3Confirmar({
   clienteSeleccionado, items, subtotal, totalUsd, flete, corte, totalConFlete,
   totalBs, tasa, formasPago, referenciaPago, transportistaSeleccionado, notas,
-  esCod,
+  esCod, config,
 }) {
+  const esPersonal = clienteSeleccionado?.tipo_cliente === 'personal'
+  const descPct = config?.descuento_personal_pct ?? 10.00
+  const descuentoMonto = esPersonal ? round2(subtotal * (descPct / 100)) : 0
+
   return (
     <div className="flex-1 min-h-0 flex flex-col lg:flex-row lg:gap-4 p-4 pb-28 lg:pb-4 overflow-y-auto">
       {/* ── Columna izquierda: Cliente + Productos ── */}
@@ -2598,6 +2838,11 @@ function Step3Confirmar({
           <div className="flex items-center gap-2">
             <User size={14} className="text-slate-400" />
             <span className="font-medium text-sm text-slate-800">{clienteSeleccionado?.nombre}</span>
+            {clienteSeleccionado?.tipo_cliente === 'personal' && (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200 shrink-0">
+                Personal ({config?.descuento_personal_pct ?? 10}%)
+              </span>
+            )}
           </div>
           {clienteSeleccionado?.direccion && (
             <p className="text-xs text-slate-400 mt-0.5 ml-5">{clienteSeleccionado.direccion}</p>
@@ -2638,6 +2883,12 @@ function Step3Confirmar({
             <span className="text-slate-500">Subtotal</span>
             <span className="text-slate-700">{fmtUsd(subtotal)}</span>
           </div>
+          {esPersonal && (
+            <div className="flex justify-between text-sm text-amber-700 font-medium">
+              <span>Descuento Personal ({config?.descuento_personal_pct ?? 10}%)</span>
+              <span>-{fmtUsd(descuentoMonto)}</span>
+            </div>
+          )}
           {flete > 0 && (
             <div className="flex justify-between text-sm">
               <span className="text-slate-500">Flete</span>

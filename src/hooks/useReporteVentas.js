@@ -19,6 +19,11 @@ export function useReporteVentas({ from, to, prevFrom, prevTo }) {
   return useQuery({
     queryKey: [...REPORTE_KEY, from, to, prevFrom, prevTo, esPrivilegiado, perfil?.id],
     queryFn: async () => {
+      const rawOffset = new Date().getTimezoneOffset()
+      const sign = rawOffset <= 0 ? '+' : '-'
+      const absOffset = Math.abs(rawOffset)
+      const tzStr = `${sign}${String(Math.floor(absOffset / 60)).padStart(2, '0')}:${String(absOffset % 60).padStart(2, '0')}`
+
       // ── 1. Despachos entregados y en entrega (vía RPC) ──
       const fetchDespachos = async (f, t) => {
         const { data, error } = await supabase.rpc('obtener_reporte_ventas_operaciones', {
@@ -66,13 +71,37 @@ export function useReporteVentas({ from, to, prevFrom, prevTo }) {
         }
       }
 
-      const [despachosRaw, prevDespachosRaw, comisionesRaw, prevComisionesRaw, dbVendedores, config] = await Promise.all([
+      const fetchDevoluciones = async (f, t) => {
+        const { data, error } = await supabase
+          .from('cuentas_por_cobrar')
+          .select(`
+            id, cliente_id, monto_usd, forma_pago_abono, referencia, descripcion, creado_en, registrado_por,
+            cliente:clientes!cuentas_por_cobrar_cliente_id_fkey(id, nombre, tipo_cliente, vendedor_id)
+          `)
+          .eq('tipo', 'devolucion_credito')
+          .gte('creado_en', `${f}T00:00:00${tzStr}`)
+          .lte('creado_en', `${t}T23:59:59.999${tzStr}`)
+          .order('creado_en', { ascending: false })
+
+        if (error) throw error
+
+        const filtered = (data ?? []).filter(item => {
+          if (!item.cliente) return false
+          if (!esPrivilegiado && item.cliente.vendedor_id !== perfil?.id) return false
+          return true
+        })
+        return filtered
+      }
+
+      const [despachosRaw, prevDespachosRaw, comisionesRaw, prevComisionesRaw, dbVendedores, config, devolucionesRaw, prevDevolucionesRaw] = await Promise.all([
         fetchDespachos(from, to),
         fetchDespachos(prevFrom, prevTo),
         fetchComisionesWorker(from, to),
         fetchComisionesWorker(prevFrom, prevTo),
         fetchUsuarios(),
         fetchConfiguracion(),
+        fetchDevoluciones(from, to),
+        fetchDevoluciones(prevFrom, prevTo),
       ])
 
       const vendorMarkupMap = {}
@@ -98,7 +127,9 @@ export function useReporteVentas({ from, to, prevFrom, prevTo }) {
                 const metodosDefinitivos = Array.isArray(f.metodos_pagados) ? f.metodos_pagados : (Array.isArray(f.metodo_propuesto) ? f.metodo_propuesto : []);
                 if (metodosDefinitivos.length > 0) {
                   metodosDefinitivos.forEach(p => {
-                    processedFormas.push({ metodo: p.metodo === 'Efectivo' ? 'Efectivo $' : (p.metodo || 'Efectivo $'), monto: Number(p.monto) || 0 })
+                    const rawMetodo = p.metodo === 'Efectivo' ? 'Efectivo $' : (p.metodo || 'Efectivo $')
+                    const finalMetodo = (rawMetodo === 'Transferencia' || rawMetodo === 'Pago Móvil') ? 'Transf. / Pago Móvil' : rawMetodo
+                    processedFormas.push({ metodo: finalMetodo, monto: Number(p.monto) || 0 })
                   })
                 } else {
                   processedFormas.push({ metodo: 'Efectivo $', monto: Number(f.monto) || 0 })
@@ -107,7 +138,8 @@ export function useReporteVentas({ from, to, prevFrom, prevTo }) {
                 processedFormas.push({ metodo: 'Cobro a destino', monto: Number(f.monto) || 0 })
               }
             } else {
-              const metodoNorm = f.metodo === 'Efectivo' ? 'Efectivo $' : (f.metodo || 'Sin especificar')
+              const rawMetodo = f.metodo === 'Efectivo' ? 'Efectivo $' : (f.metodo || 'Sin especificar')
+              const metodoNorm = (rawMetodo === 'Transferencia' || rawMetodo === 'Pago Móvil') ? 'Transf. / Pago Móvil' : rawMetodo
               processedFormas.push({ ...f, metodo: metodoNorm })
             }
           })
@@ -491,6 +523,7 @@ export function useReporteVentas({ from, to, prevFrom, prevTo }) {
           clienteMap[cnombre] = {
             id: cnombre,
             nombre: cnombre,
+            tipo_cliente: d.cliente_tipo_cliente,
             despachos: 0,
             totalUsd: 0,
             vendedor: d.asesor_nombre || '—',
@@ -560,10 +593,43 @@ export function useReporteVentas({ from, to, prevFrom, prevTo }) {
           }
         })
  
+       // ── Devoluciones (Mapeo) ──
+       const devoluciones = devolucionesRaw.map(dev => {
+         const sellerId = dev.cliente?.vendedor_id
+         const seller = dbVendedores.find(u => u.id === sellerId)
+         return {
+           ...dev,
+           cliente_nombre: dev.cliente?.nombre || 'Sin cliente',
+           cliente_tipo_cliente: dev.cliente?.tipo_cliente || 'regular',
+           vendedor_id: sellerId || null,
+           vendedor_nombre: seller?.nombre || '—',
+           vendedor_color: seller?.color || '#64748b'
+         }
+       })
+
+       const prevDevoluciones = prevDevolucionesRaw.map(dev => {
+         const sellerId = dev.cliente?.vendedor_id
+         const seller = dbVendedores.find(u => u.id === sellerId)
+         return {
+           ...dev,
+           cliente_nombre: dev.cliente?.nombre || 'Sin cliente',
+           cliente_tipo_cliente: dev.cliente?.tipo_cliente || 'regular',
+           vendedor_id: sellerId || null,
+           vendedor_nombre: seller?.nombre || '—',
+           vendedor_color: seller?.color || '#64748b'
+         }
+       })
+
+       const totalDevoluciones = devoluciones.reduce((s, d) => s + Number(d.monto_usd || 0), 0)
+       const prevTotalDevoluciones = prevDevoluciones.reduce((s, d) => s + Number(d.monto_usd || 0), 0)
+
        // Forma de pago
        const formaPagoMap = {}
        despachosMapeados.forEach(d => {
          const formas = Array.isArray(d.forma_pago) ? d.forma_pago : []
+         const tasaDespacho = Number(d.tasa)
+         const tasaValida = tasaDespacho > 0 ? tasaDespacho : null
+
          if (formas.length === 0) {
            const fallback = 'Pendiente'
            if (!formaPagoMap[fallback]) formaPagoMap[fallback] = { formaPago: fallback, count: 0, totalUsd: 0, pagos: [] }
@@ -573,6 +639,9 @@ export function useReporteVentas({ from, to, prevFrom, prevTo }) {
              cliente: d.cliente_nombre || 'Sin cliente',
              numero: d.despacho_numero || d.despacho_id?.slice(0, 8),
              monto: ventaNeta(d),
+             tasa: tasaValida,
+             montoBs: tasaValida ? ventaNeta(d) * tasaValida : null,
+             referencia: null,
              es_prestamo_puro: d.es_prestamo_puro,
              es_prestamo_mixto: d.es_prestamo_mixto
            })
@@ -587,12 +656,36 @@ export function useReporteVentas({ from, to, prevFrom, prevTo }) {
                cliente: d.cliente_nombre || 'Sin cliente',
                numero: d.despacho_numero || d.despacho_id?.slice(0, 8),
                monto: monto,
+               tasa: tasaValida,
+               montoBs: tasaValida ? monto * tasaValida : null,
+               referencia: f.referencia || null,
                es_prestamo_puro: d.es_prestamo_puro,
                es_prestamo_mixto: d.es_prestamo_mixto
              })
            })
          }
        })
+
+       // Agregar las devoluciones en la forma de pago correspondiente con signo negativo
+       devoluciones.forEach(dev => {
+         const nombre = dev.forma_pago_abono || 'Sin especificar'
+         const monto = Number(dev.monto_usd) || 0
+         if (!formaPagoMap[nombre]) {
+           formaPagoMap[nombre] = { formaPago: nombre, count: 0, totalUsd: 0, pagos: [] }
+         }
+         formaPagoMap[nombre].totalUsd -= monto
+         formaPagoMap[nombre].pagos.push({
+           cliente: dev.cliente_nombre,
+           numero: 'REEMBOLSO',
+           monto: -monto,
+           tasa: null,
+           montoBs: null,
+           referencia: dev.referencia || null,
+           es_reembolso: true,
+           descripcion: dev.descripcion
+         })
+       })
+
        const porFormaPago = Object.values(formaPagoMap).sort((a, b) => b.totalUsd - a.totalUsd)
  
        return {
@@ -600,6 +693,7 @@ export function useReporteVentas({ from, to, prevFrom, prevTo }) {
            totalVentas, totalFlete, totalDescuentos, numDespachos, ticketPromedio, totalComisiones,
            comisionesPagadas, comisionesPendientes, comisionCabilla2, comisionCabilla3, comisionOtros,
            prevTotalVentas, prevNumDespachos, prevTicketPromedio, prevTotalComisiones,
+           totalDevoluciones, prevTotalDevoluciones
          },
          porVendedor,
          porCliente,
@@ -607,6 +701,7 @@ export function useReporteVentas({ from, to, prevFrom, prevTo }) {
          porCategoria,
          porFormaPago,
          despachos: despachosMapeados,
+         devoluciones,
        }
     },
     enabled: !!perfil && !!from && !!to,

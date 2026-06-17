@@ -71,7 +71,7 @@ export default function ProductoDetalleModal({ isOpen, onClose, producto, tasa =
         p2Fmt != null ? `Precio Mayor en ${labelMoneda()}: ${p2Fmt}` : '',
         disponible ? `✅ Disponible` : `❌ Agotado`,
         '',
-        '🏗️ Construacero Carabobo',
+        '🏗️ Listo POS',
       ].filter(Boolean).join('\n')
 
       if (navigator.share && navigator.canShare && cardRef.current) {
@@ -158,15 +158,10 @@ export default function ProductoDetalleModal({ isOpen, onClose, producto, tasa =
 
         {/* Contenido — diseñado para screenshot limpio */}
         <div className="flex-1 overflow-y-auto" ref={cardRef}>
-          <div className="px-5 pt-5 pb-6 space-y-5">
-
-            {/* Logo */}
-            <div className="flex justify-center">
-              <img src="/logo.png" alt="Construacero Carabobo" className="h-12 w-auto object-contain" />
-            </div>
+          <div className="px-3 pt-2 pb-4 space-y-2.5 sm:px-5 sm:pt-5 sm:pb-6 sm:space-y-5">
 
             {/* Imagen del producto */}
-            <div className="w-full aspect-square max-h-64 rounded-2xl overflow-hidden bg-slate-50 border border-slate-200 flex items-center justify-center">
+            <div className="w-full aspect-square max-h-44 sm:max-h-64 rounded-xl sm:rounded-2xl overflow-hidden bg-slate-50 border border-slate-200 flex items-center justify-center">
               {producto.imagen_url ? (
                 <img src={producto.imagen_url} alt={producto.nombre} className="w-full h-full object-contain" />
               ) : (
@@ -175,8 +170,8 @@ export default function ProductoDetalleModal({ isOpen, onClose, producto, tasa =
             </div>
 
             {/* Info del producto */}
-            <div className="space-y-1 text-center">
-              <h2 className="text-lg font-black text-slate-800 leading-tight">{producto.nombre}</h2>
+            <div className="space-y-0.5 text-center">
+              <h2 className="text-base sm:text-lg font-black text-slate-800 leading-tight">{producto.nombre}</h2>
               {producto.codigo && (
                 <p className="text-xs text-slate-400 font-mono">Código: {producto.codigo}</p>
               )}
@@ -186,7 +181,7 @@ export default function ProductoDetalleModal({ isOpen, onClose, producto, tasa =
             </div>
 
             {/* Precios — adaptados a la moneda elegida */}
-            <div className="bg-slate-50 rounded-2xl border border-slate-200 p-4 space-y-3">
+            <div className="bg-slate-50 rounded-xl sm:rounded-2xl border border-slate-200 p-3 space-y-2 sm:p-4 sm:space-y-3">
               {/* Badge indicador de moneda — nombre amigable al cliente */}
               {(() => {
                 const cfg = MONEDAS.find(m => m.key === moneda)
@@ -211,7 +206,7 @@ export default function ProductoDetalleModal({ isOpen, onClose, producto, tasa =
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">
                   {precio2Display != null ? 'Precio Detal' : 'Precio'}
                 </p>
-                <p className="text-3xl font-black text-slate-800">
+                <p className="text-2xl sm:text-3xl font-black text-slate-800">
                   {precioEnMoneda(precioUsdDisplay) ?? '—'}
                 </p>
 
@@ -219,18 +214,18 @@ export default function ProductoDetalleModal({ isOpen, onClose, producto, tasa =
 
               {/* Precios secundarios */}
               {(precio2Display != null || precio3Display != null) && (
-                <div className="grid grid-cols-2 gap-2 pt-3 border-t border-slate-200">
+                <div className="grid grid-cols-2 gap-2 pt-2.5 border-t border-slate-200">
                   {precio2Display != null && (
-                    <div className="text-center bg-white rounded-xl border border-slate-200 p-3">
+                    <div className="text-center bg-white rounded-lg sm:rounded-xl border border-slate-200 p-2 sm:p-3">
                       <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Mayor</p>
-                      <p className="text-base font-black text-slate-700">{precioEnMoneda(precio2Display)}</p>
+                      <p className="text-sm sm:text-base font-black text-slate-700">{precioEnMoneda(precio2Display)}</p>
 
                     </div>
                   )}
                   {precio3Display != null && (
-                    <div className="text-center bg-white rounded-xl border border-slate-200 p-3">
+                    <div className="text-center bg-white rounded-lg sm:rounded-xl border border-slate-200 p-2 sm:p-3">
                       <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Especial</p>
-                      <p className="text-base font-black text-slate-700">{precioEnMoneda(precio3Display)}</p>
+                      <p className="text-sm sm:text-base font-black text-slate-700">{precioEnMoneda(precio3Display)}</p>
 
                     </div>
                   )}
@@ -239,8 +234,8 @@ export default function ProductoDetalleModal({ isOpen, onClose, producto, tasa =
             </div>
 
             {/* Disponibilidad */}
-            <div className="flex items-center justify-center">
-              <span className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-bold ${
+            <div className="flex items-center justify-center pt-0.5">
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1 sm:px-4 sm:py-2 rounded-full text-xs sm:text-sm font-bold ${
                 disponible
                   ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                   : 'bg-red-50 text-red-700 border border-red-200'
@@ -257,9 +252,9 @@ export default function ProductoDetalleModal({ isOpen, onClose, producto, tasa =
             )}
 
             {/* Footer branding */}
-            <div className="text-center pt-3 border-t border-slate-100">
-              <p className="text-[11px] font-bold text-slate-400">Construacero Carabobo</p>
-              <p className="text-[10px] text-slate-300">Materiales de construcción</p>
+            <div className="text-center pt-2 border-t border-slate-100">
+              <p className="text-[10px] sm:text-[11px] font-bold text-slate-400">Listo POS</p>
+              <p className="text-[9px] sm:text-[10px] text-slate-300">Materiales de construcción</p>
             </div>
           </div>
         </div>

@@ -5,7 +5,7 @@
 
 import supabase from './supabase/client'
 
-const NOTIF_KEY_BASE = 'construacero_notifications_v2'
+const NOTIF_KEY_BASE = 'listopos_notifications_v2'
 const MAX_NOTIFS = 100
 
 // ─── Sonido de notificación (dual: normal + urgente) ─────────────────────────
@@ -204,7 +204,7 @@ function _insertLocalNotification(type, title, body, meta) {
   if (notifs.length > MAX_NOTIFS) notifs.length = MAX_NOTIFS
   saveNotifs(notifs)
 
-  window.dispatchEvent(new CustomEvent('construacero-notification', { detail: notif }))
+  window.dispatchEvent(new CustomEvent('listopos-notification', { detail: notif }))
   playNotifSound(type)
   return notif
 }
@@ -268,17 +268,17 @@ export function getUnreadCount() {
 
 export function markAllRead() {
   saveNotifs(readNotifs().map(n => ({ ...n, read: true })))
-  window.dispatchEvent(new CustomEvent('construacero-notification-read'))
+  window.dispatchEvent(new CustomEvent('listopos-notification-read'))
 }
 
 export function markRead(id) {
   saveNotifs(readNotifs().map(n => n.id === id ? { ...n, read: true } : n))
-  window.dispatchEvent(new CustomEvent('construacero-notification-read'))
+  window.dispatchEvent(new CustomEvent('listopos-notification-read'))
 }
 
 export function clearNotifications() {
   saveNotifs([])
-  window.dispatchEvent(new CustomEvent('construacero-notification-read'))
+  window.dispatchEvent(new CustomEvent('listopos-notification-read'))
 }
 
 // ─── Helpers de alto nivel ─────────────────────────────────────────────────────
@@ -493,7 +493,7 @@ export function notifyCompromisoAlto(productos) {
 
 // ─── Recordatorios proactivos (cooldown system) ──────────────────────────────
 
-const RECORDATORIO_COOLDOWN_KEY = 'construacero_recordatorios_v1'
+const RECORDATORIO_COOLDOWN_KEY = 'listopos_recordatorios_v1'
 const RECORDATORIO_COOLDOWN_MS  = 1 * 60 * 60 * 1000 // 1 hora por cotización
 const DESPACHO_PENDIENTE_COOLDOWN_MS = 4 * 60 * 60 * 1000 // 4 horas por despacho
 const COMPROMISO_ALTO_COOLDOWN_MS = 6 * 60 * 60 * 1000 // 6 horas

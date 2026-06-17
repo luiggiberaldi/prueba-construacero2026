@@ -4,7 +4,7 @@ import { Package, Clock, Plus } from 'lucide-react'
 
 import useAuthStore from '../../store/useAuthStore'
 
-const STORAGE_KEY = 'construacero_productos_recientes_'
+const STORAGE_KEY = 'listopos_productos_recientes_'
 const MAX_RECIENTES = 10
 
 // Obtener sufijo de negocio para aislamiento total

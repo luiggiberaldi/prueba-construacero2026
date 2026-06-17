@@ -21,7 +21,10 @@ export function SectionH3({ icon: Icon, children }) {
 
 // ─── Panel de cesta (lado derecho del paso 2) ────────────────────────────────
 // Inspirado en PreciosAlDia: FAB + bottom sheet en móvil, panel lateral en desktop
-export default function CestaPanel({ items, onCambiar, onEliminar, onEditar, subtotal, tasa, onSiguiente, onAnterior, preciosMap = {}, stockMap = {} }) {
+export default function CestaPanel({ 
+  items, onCambiar, onEliminar, onEditar, subtotal, tasa, onSiguiente, onAnterior, preciosMap = {}, stockMap = {},
+  esPersonal = false, descPct = 10
+}) {
   // 'closed' | 'normal' | 'expanded'
   const [sheetState, setSheetState] = useState('closed')
   const sheetOpen = sheetState !== 'closed'
@@ -227,16 +230,39 @@ export default function CestaPanel({ items, onCambiar, onEliminar, onEditar, sub
     </div>
   )
 
+  const descuentoPersonalUsd = esPersonal ? round2(subtotal * (descPct / 100)) : 0
+  const totalUsd = esPersonal ? round2(subtotal - descuentoPersonalUsd) : subtotal
+
   // Footer compartido (totales + botones)
   const footerContent = (
     <div className="border-t border-slate-200 p-3 sm:p-4 pb-6 sm:pb-4 space-y-2 sm:space-y-3 bg-white">
       {items.length > 0 && (
-        <div className="flex justify-between items-end px-1">
-          <div>
-            <span className="text-[12px] sm:text-xs font-black text-slate-400 uppercase tracking-wider">Subtotal</span>
-            {tasa > 0 && <p className="text-[11px] text-slate-400 mt-0.5">{fmtBs(usdToBs(subtotal, tasa))}</p>}
+        <div className="space-y-1.5 px-1 mb-2">
+          {esPersonal && (
+            <p className="text-[10px] text-amber-600 font-semibold bg-amber-50 border border-amber-100 px-2 py-1 rounded-lg text-center">
+              * Descuento automático de personal ({descPct}%) se aplicará en el total.
+            </p>
+          )}
+          
+          <div className="flex justify-between items-center text-xs text-slate-500">
+            <span>Subtotal</span>
+            <span className="font-bold text-slate-700">{fmtUsd(subtotal)}</span>
           </div>
-          <span className="text-xl sm:text-2xl font-black text-slate-800">{fmtUsd(subtotal)}</span>
+
+          {esPersonal && (
+            <div className="flex justify-between items-center text-xs text-amber-700 font-medium">
+              <span>Desc. Personal ({descPct}%)</span>
+              <span className="font-bold">-{fmtUsd(descuentoPersonalUsd)}</span>
+            </div>
+          )}
+
+          <div className="flex justify-between items-end pt-1 border-t border-slate-100">
+            <div>
+              <span className="text-[12px] sm:text-xs font-black text-slate-400 uppercase tracking-wider">Total</span>
+              {tasa > 0 && <p className="text-[11px] text-slate-400 mt-0.5">{fmtBs(usdToBs(totalUsd, tasa))}</p>}
+            </div>
+            <span className="text-xl sm:text-2xl font-black text-slate-800">{fmtUsd(totalUsd)}</span>
+          </div>
         </div>
       )}
       <button type="button" onClick={onSiguiente} disabled={items.length === 0}

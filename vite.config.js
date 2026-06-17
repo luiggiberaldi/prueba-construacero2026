@@ -13,11 +13,11 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(gitHash),
   },
   server: {
-    proxy: {
+      proxy: {
       '/api': {
         // Proxy a la producción mientras wrangler local no funciona en Windows+Node22
         // Para usar el worker local: cambiar a 'http://localhost:8787'
-        target: 'https://prueba-construacero2026.luiggiberaldi94.workers.dev',
+        target: 'https://listo-pos-api.luiggiberaldi94.workers.dev',
         changeOrigin: true,
         secure: true,
       }
@@ -51,8 +51,8 @@ export default defineConfig({
       },
 
       manifest: {
-        name: 'Construacero Carabobo',
-        short_name: 'Construacero',
+        name: 'Listo POS',
+        short_name: 'Listo POS',
         description: 'Sistema de cotizaciones y despachos',
         start_url: '/',
         display: 'standalone',

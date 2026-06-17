@@ -3,12 +3,13 @@
 import { useState, useEffect, useRef } from 'react'
 import { 
   Cloud, RefreshCw, AlertTriangle, CheckCircle2, X, Loader2,
-  UserPlus, ShoppingCart, FileText, ArrowRight, Trash2, SkipForward
+  UserPlus, ShoppingCart, FileText, ArrowRight, Trash2, SkipForward,
+  ClipboardList
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import useAuthStore from '../../store/useAuthStore'
 import { dequeuePending, markDone, markFailed, replaceQueuedDespachoId } from '../../lib/mutationQueue'
-import { clearLocalClientesOffline } from '../../lib/offlineSnapshots'
+import { clearLocalClientesOffline, clearLocalTransportistasOffline } from '../../lib/offlineSnapshots'
 import { removeOfflineEntity } from '../../lib/offlineEntities'
 import supabase from '../../services/supabase/client'
 import { apiUrl } from '../../services/apiBase'
@@ -60,6 +61,18 @@ async function dispatchItem(item, idMap) {
     const result = await res.json()
     if (!res.ok) throw new Error(result.error || 'Error al crear cliente offline')
     return result // Retorna { id, ... } para el mapeo
+  }
+
+  if (item.type === 'CREAR_TRANSPORTISTA') {
+    const res = await fetch(apiUrl('/api/transportistas/crear'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(item.payload),
+    })
+    const result = await res.json()
+    if (!res.ok) throw new Error(result.error || 'Error al crear transportista offline')
+    const trans = result.transportista || result
+    return { id: trans.id, ...result }
   }
 
   if (item.type === 'VENTA_RAPIDA') {
@@ -114,7 +127,11 @@ async function dispatchItem(item, idMap) {
   }
 
   if (item.type === 'CREAR_DESPACHO') {
-    const payload = { ...item.payload, cotizacionId: mapId(item.payload.cotizacionId) }
+    const payload = {
+      ...item.payload,
+      cotizacionId: mapId(item.payload.cotizacionId),
+      transportistaId: mapId(item.payload.transportistaId),
+    }
     delete payload.despachoId
     const res = await fetch(apiUrl('/api/despachos/crear'), {
       method: 'POST',
@@ -128,10 +145,15 @@ async function dispatchItem(item, idMap) {
   }
 
   if (item.type === 'EDITAR_DESPACHO') {
+    const payload = {
+      ...item.payload,
+      despachoId: mapId(item.payload.despachoId),
+      transportistaId: mapId(item.payload.transportistaId),
+    }
     const res = await fetch(apiUrl('/api/despachos/editar-pago'), {
       method: 'POST',
       headers,
-      body: JSON.stringify({ ...item.payload, despachoId: mapId(item.payload.despachoId) }),
+      body: JSON.stringify(payload),
     })
     const result = await res.json()
     if (!res.ok) throw new Error(result.error || 'Error al editar despacho offline')
@@ -168,6 +190,7 @@ export default function SyncModal({ isOpen, onClose }) {
   const [errorMap, setErrorMap] = useState({})
   const [syncState, setSyncState] = useState('idle') // 'idle' | 'syncing' | 'paused' | 'success' | 'finished_with_errors'
   const [conflict, setConflict] = useState(null)
+  const [editJson, setEditJson] = useState(null)
   
   const idMapRef = useRef({}) // local_cli_XXXX -> real_uuid
   const itemsRef = useRef([])
@@ -185,7 +208,7 @@ export default function SyncModal({ isOpen, onClose }) {
 
   // Iniciar el procesamiento secuencial
   const startSync = async () => {
-    if (items.length === 0) {
+    if (itemsRef.current.length === 0) {
       setOfflineManual(false)
       showToast('Volviendo a modo online', 'success')
       onClose()
@@ -197,8 +220,8 @@ export default function SyncModal({ isOpen, onClose }) {
     // Si reiniciamos tras pausa, retomar desde donde quedamos
     const startIndex = currentIndexRef.current === -1 ? 0 : currentIndexRef.current
     
-    for (let i = startIndex; i < items.length; i++) {
-      const item = items[i]
+    for (let i = startIndex; i < itemsRef.current.length; i++) {
+      const item = itemsRef.current[i]
       currentIndexRef.current = i
       setCurrentIndex(i)
       
@@ -209,6 +232,9 @@ export default function SyncModal({ isOpen, onClose }) {
         
         // Si creamos un cliente nuevo offline, guardar mapeo de ID
         if (item.type === 'CREAR_CLIENTE' && item.payload.localId && result?.id) {
+          idMapRef.current[item.payload.localId] = result.id
+        }
+        if (item.type === 'CREAR_TRANSPORTISTA' && item.payload.localId && result?.id) {
           idMapRef.current[item.payload.localId] = result.id
         }
         if (item.type === 'VENTA_RAPIDA' && result?.id) {
@@ -257,6 +283,7 @@ export default function SyncModal({ isOpen, onClose }) {
     if (pendingNow.length === 0) {
       setSyncState('success')
       await clearLocalClientesOffline() // Limpiar clientes offline
+      await clearLocalTransportistasOffline() // Limpiar transportistas offline
       showToast('Sincronización completada exitosamente', 'success')
       // Desactivar modo offline manual automáticamente al completar
       setOfflineManual(false)
@@ -290,6 +317,42 @@ export default function SyncModal({ isOpen, onClose }) {
     // Avanzar índice
     currentIndexRef.current = index + 1
     startSync()
+  }
+
+  // Guardar el payload editado y retomar la sincronización
+  const handleSaveEditedPayload = async () => {
+    try {
+      const parsed = JSON.parse(editJson)
+      
+      const updatedItem = {
+        ...conflict.item,
+        payload: parsed,
+        status: 'pending',
+        error: null,
+      }
+      
+      const { set: setIdbValue } = await import('idb-keyval')
+      await setIdbValue(conflict.item.id, updatedItem)
+      
+      // Actualizar la referencia mutable y el estado de la vista
+      itemsRef.current = itemsRef.current.map(item => item.id === conflict.item.id ? updatedItem : item)
+      setItems(itemsRef.current)
+      
+      setErrorMap(prev => ({ ...prev, [conflict.item.id]: null }))
+      setStatusMap(prev => ({ ...prev, [conflict.item.id]: 'pending' }))
+      
+      showToast('Datos actualizados. Reintentando...', 'success')
+      setEditJson(null)
+      const cachedConflictIndex = conflict.index
+      setConflict(null)
+      setSyncState('syncing')
+      
+      // Retomar el sync con el payload corregido
+      currentIndexRef.current = cachedConflictIndex
+      startSync()
+    } catch (err) {
+      showToast('Error en formato JSON: ' + err.message, 'error')
+    }
   }
 
   if (!isOpen) return null
@@ -377,13 +440,21 @@ export default function SyncModal({ isOpen, onClose }) {
                       <div className="min-w-0">
                         <p className="text-xs font-bold text-white">
                           {item.type === 'CREAR_CLIENTE' && '👤 Crear Cliente'}
+                          {item.type === 'CREAR_TRANSPORTISTA' && '🚚 Crear Transportista'}
                           {item.type === 'VENTA_RAPIDA' && '📦 Registrar Venta'}
                           {item.type === 'GUARDAR_COTIZACION' && '📋 Guardar Cotización'}
+                          {item.type === 'CREAR_DESPACHO' && '📋 Crear Despacho'}
+                          {item.type === 'EDITAR_DESPACHO' && '✍️ Editar Despacho'}
+                          {item.type?.startsWith('MARCAR_DESPACHO_') && '✅ Actualizar Despacho'}
                         </p>
                         <p className="text-[10px] text-slate-500 truncate mt-0.5">
                           {item.type === 'CREAR_CLIENTE' && item.payload.nombre}
+                          {item.type === 'CREAR_TRANSPORTISTA' && item.payload.nombre}
                           {item.type === 'VENTA_RAPIDA' && `Cliente: ${item.payload.clienteNombre || 'Sin especificar'}`}
                           {item.type === 'GUARDAR_COTIZACION' && `ID: ${item.payload.cotizacionId || 'Local'}`}
+                          {item.type === 'CREAR_DESPACHO' && `Cotización: ${item.payload.cotizacionId || 'N/A'}`}
+                          {item.type === 'EDITAR_DESPACHO' && `Despacho: ${item.payload.despachoId}`}
+                          {item.type?.startsWith('MARCAR_DESPACHO_') && `Estado: ${item.payload.nuevoEstado}`}
                         </p>
                         {errorMsg && <p className="text-[10px] text-rose-400 font-semibold mt-1">{errorMsg}</p>}
                       </div>
@@ -399,34 +470,71 @@ export default function SyncModal({ isOpen, onClose }) {
             <div className="p-4 border border-amber-500/30 rounded-2xl bg-amber-500/5 space-y-4 animate-in slide-in-from-bottom-2 duration-300">
               <div className="flex items-start gap-3">
                 <AlertTriangle size={18} className="text-amber-500 shrink-0 mt-0.5" />
-                <div className="space-y-1">
+                <div className="space-y-1 w-full min-w-0">
                   <p className="text-xs font-bold text-amber-400">CONFLICTO AL SINCRONIZAR</p>
-                  <p className="text-xs text-slate-300">{conflict.error}</p>
+                  <p className="text-xs text-slate-300 break-words">{conflict.error}</p>
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-700/30 justify-end">
-                <button
-                  onClick={handleDiscardConflict}
-                  className="flex items-center gap-1 px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 rounded-lg text-[10px] font-bold transition-all active:scale-95"
-                >
-                  <Trash2 size={11} />
-                  Descartar Venta
-                </button>
-                <button
-                  onClick={handleSkipConflict}
-                  className="flex items-center gap-1 px-3 py-1.5 bg-slate-700/40 hover:bg-slate-700/60 text-slate-300 rounded-lg text-[10px] font-bold transition-all active:scale-95"
-                >
-                  <SkipForward size={11} />
-                  Omitir por ahora
-                </button>
-                <button
-                  onClick={startSync}
-                  className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold transition-all active:scale-95 shadow-sm"
-                >
-                  <RefreshCw size={11} />
-                  Reintentar
-                </button>
-              </div>
+
+              {editJson !== null ? (
+                <div className="space-y-3 pt-2 border-t border-slate-700/30">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Editar Datos (JSON)</span>
+                    <span className="text-[9px] text-slate-500 font-mono">Modifica cantidades, clientes o tasas</span>
+                  </div>
+                  <textarea
+                    value={editJson}
+                    onChange={(e) => setEditJson(e.target.value)}
+                    className="w-full h-36 rounded-xl bg-slate-900 border border-slate-700 p-2.5 text-[11px] font-mono text-emerald-400 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none resize-none"
+                    spellCheck="false"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => setEditJson(null)}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 rounded-lg text-[10px] font-bold transition-all active:scale-95"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={handleSaveEditedPayload}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold transition-all active:scale-95 shadow-sm"
+                    >
+                      Guardar y Reintentar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-700/30 justify-end">
+                  <button
+                    onClick={() => setEditJson(JSON.stringify(conflict.item.payload, null, 2))}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-sky-600/20 hover:bg-sky-600/30 text-sky-400 rounded-lg text-[10px] font-bold transition-all active:scale-95"
+                  >
+                    <ClipboardList size={11} />
+                    Editar Datos
+                  </button>
+                  <button
+                    onClick={handleDiscardConflict}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 rounded-lg text-[10px] font-bold transition-all active:scale-95"
+                  >
+                    <Trash2 size={11} />
+                    Descartar Venta
+                  </button>
+                  <button
+                    onClick={handleSkipConflict}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-slate-700/40 hover:bg-slate-700/60 text-slate-300 rounded-lg text-[10px] font-bold transition-all active:scale-95"
+                  >
+                    <SkipForward size={11} />
+                    Omitir por ahora
+                  </button>
+                  <button
+                    onClick={startSync}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold transition-all active:scale-95 shadow-sm"
+                  >
+                    <RefreshCw size={11} />
+                    Reintentar
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

@@ -1,6 +1,6 @@
 import { json, jsonError, corsHeaders, isValidUuid } from '../lib/utils.js'
 import { verifyAuth, validateOperator, getOperatorRole, verifySupervisor } from '../lib/auth.js'
-import { registrarAuditoria } from '../lib/audit.js'
+import { registrarAuditoria, logToSystem } from '../lib/audit.js'
 
 // ── Save cotización (service key bypasses RLS for cross-vendor clients) ────
 export async function handleGuardarCotizacion(request, env) {
@@ -557,18 +557,6 @@ export async function handleVentaRapida(request, env) {
   }
 
   try {
-    const cliOwnerRes = await fetch(
-      `${env.SUPABASE_URL}/rest/v1/clientes?id=eq.${clienteId}&cuenta_id=eq.${user.id}&select=id,vendedor_id`,
-      { headers }
-    );
-    if (!cliOwnerRes.ok) {
-      const err = await cliOwnerRes.text();
-      return jsonError(`Error al validar cliente: ${err}`, 500, request);
-    }
-    const [clienteVenta] = await cliOwnerRes.json();
-    if (!clienteVenta) return jsonError('Cliente no encontrado', 404, request);
-    const vendedorDestinoId = clienteVenta.vendedor_id || user.operator_id;
-
     // 1. Obtener productos para verificar stock y obtener snapshots
     const validProdIds = items.map(i => i.productoId).filter(id => id && id.length === 36 && id.includes('-'));
     let stockMap = {};
@@ -618,7 +606,7 @@ export async function handleVentaRapida(request, env) {
     // 3. Create cotización in estado 'aceptada'
     const cotBody = {
       cliente_id: clienteId,
-      vendedor_id: vendedorDestinoId,
+      vendedor_id: user.operator_id,
       estado: 'aceptada',
       subtotal_usd: subtotal,
       descuento_global_pct: descPct,
@@ -673,7 +661,7 @@ export async function handleVentaRapida(request, env) {
         cotizacion_id: cot.id,
         numero: cot.numero,
         cliente_id: clienteId,
-        vendedor_id: vendedorDestinoId,
+        vendedor_id: user.operator_id,
         transportista_id: transportistaId || null,
         estado: 'pendiente',
         total_usd: totalUsd,
@@ -737,13 +725,112 @@ export async function handleVentaRapida(request, env) {
         categoria: 'COTIZACION', accion: 'VENTA_RAPIDA',
         descripcion: `Venta rápida: cotización #${cot.numero} + despacho #${despacho.numero}`,
         entidadTipo: 'nota_despacho', entidadId: despacho.id,
-        meta: { cotizacion_id: cot.id, total_usd: totalUsd, items_count: items.length, vendedor_destino_id: vendedorDestinoId }, ip,
+        meta: { cotizacion_id: cot.id, total_usd: totalUsd, items_count: items.length }, ip,
       });
-    } catch {}
+    } catch (auditErr) {
+      console.error('[VR] Auditoría falló:', auditErr.message);
+    }
 
-    return json({ id: despacho.id, numero: despacho.numero, cotizacionId: cot.id, vendedorId: vendedorDestinoId }, 200, request);
+    return json({ id: despacho.id, numero: despacho.numero, cotizacionId: cot.id }, 200, request);
   } catch (e) {
     console.error('[VR] Uncaught error:', e.message, e.stack);
     return jsonError(e.message || 'Error al crear venta rápida', 500, request);
   }
+}
+
+// ── runCleanupCotizaciones (Cron Job diario de limpieza) ──
+export async function runCleanupCotizaciones(env) {
+  const now = new Date();
+  
+  // Calcular fechas límite usando el tiempo actual del servidor
+  const fifteenDaysAgo = new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000).toISOString();
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  
+  const supaHeaders = {
+    apikey: env.SUPABASE_SERVICE_KEY,
+    Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+    'Content-Type': 'application/json',
+    Prefer: 'return=representation'
+  };
+
+  const results = {
+    success: true,
+    anuladas: 0,
+    eliminadas: 0,
+    errors: []
+  };
+
+  try {
+    // 1. ANULAR: Cotizaciones > 15 días en estado 'borrador' o 'enviada'
+    const cancelRes = await fetch(
+      `${env.SUPABASE_URL}/rest/v1/cotizaciones?creado_en=lt.${fifteenDaysAgo}&estado=in.(borrador,enviada)`,
+      {
+        method: 'PATCH',
+        headers: supaHeaders,
+        body: JSON.stringify({
+          estado: 'anulada',
+          actualizado_en: now.toISOString()
+        })
+      }
+    );
+
+    if (!cancelRes.ok) {
+      const errText = await cancelRes.text();
+      results.errors.push(`Error al anular cotizaciones: ${errText}`);
+      console.error('[CRON CLEANUP] Error al anular:', errText);
+    } else {
+      const cancelledRows = await cancelRes.json();
+      results.anuladas = Array.isArray(cancelledRows) ? cancelledRows.length : 0;
+    }
+
+    // 2. ELIMINAR: Cotizaciones > 30 días en estados inactivos o no confirmados
+    // NOTA: 'aceptada' NUNCA se elimina para proteger integridad referencial (notas_despacho, comisiones, etc)
+    const deleteRes = await fetch(
+      `${env.SUPABASE_URL}/rest/v1/cotizaciones?creado_en=lt.${thirtyDaysAgo}&estado=in.(borrador,enviada,rechazada,anulada,vencida)`,
+      {
+        method: 'DELETE',
+        headers: supaHeaders
+      }
+    );
+
+    if (!deleteRes.ok) {
+      const errText = await deleteRes.text();
+      results.errors.push(`Error al eliminar cotizaciones: ${errText}`);
+      console.error('[CRON CLEANUP] Error al eliminar:', errText);
+    } else {
+      const deletedRows = await deleteRes.json();
+      results.eliminadas = Array.isArray(deletedRows) ? deletedRows.length : 0;
+    }
+
+    // 3. Registrar Log en el sistema
+    await logToSystem(env, {
+      nivel: results.errors.length > 0 ? 'warning' : 'info',
+      origen: 'worker-cron',
+      categoria: 'SISTEMA',
+      mensaje: `Limpieza automática de cotizaciones completada. Anuladas (>15 días): ${results.anuladas}. Eliminadas (>30 días): ${results.eliminadas}.`,
+      meta: {
+        cutoff_15_days: fifteenDaysAgo,
+        cutoff_30_days: thirtyDaysAgo,
+        anuladas_count: results.anuladas,
+        eliminadas_count: results.eliminadas,
+        errors: results.errors
+      }
+    });
+
+  } catch (err) {
+    results.success = false;
+    results.errors.push(err.message);
+    console.error('[CRON CLEANUP ERROR]:', err.message);
+    
+    await logToSystem(env, {
+      nivel: 'error',
+      origen: 'worker-cron',
+      categoria: 'SISTEMA',
+      mensaje: `Error fatal en la limpieza automática de cotizaciones: ${err.message}`,
+      stack: err.stack?.slice(0, 3000),
+      meta: { error: err.message }
+    });
+  }
+
+  return results;
 }

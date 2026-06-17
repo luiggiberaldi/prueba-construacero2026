@@ -1,19 +1,19 @@
-// src/services/pdf/cotizacionPDF.js
-// Genera PDF profesional de Cotización — formato Construacero Carabobo
+// Genera PDF profesional de Cotización — formato Listo POS
 import { jsPDF } from 'jspdf'
 import { cargarLogo } from './pdfLogo'
 import {
   PAGE_W, PAGE_H, MARGIN, CONTENT_W,
-  C_DARK, C_WHITE,
+  C_WHITE,
   CUENTAS_BANCARIAS,
   fmtFecha, fmtPrecio, fmtTotal, fmtTelefono,
   hexToRgb, drawWatermark, drawSimplifiedHeader,
   checkPage
 } from './pdfShared'
 
-// Nueva paleta de colores premium: Fusión Industrial de Alta Gama (Azul Acero & Amarillo Mostaza Cerrajería)
-const C_PRIMARY = [26, 54, 93]      // Azul de Acero Oscuro (Corporativo e industrial)
-const C_ACCENT  = [245, 158, 11]    // Amarillo Mostaza Cálido de Cerrajería (Acento de alta visibilidad)
+// Nueva paleta de colores premium: Fusión Industrial de Alta Gama (Amarillo Principal & Charcoal de Cerrajería)
+const C_PRIMARY = [255, 242, 0]    // Amarillo de alta visibilidad (Color principal de la marca)
+const C_ACCENT  = [59, 59, 59]      // Gris #3b3b3b (Acento de la marca)
+const C_DARK    = [59, 59, 59]      // Gris #3b3b3b para texto legible
 
 export async function generarPDF({ cotizacion, items = [], config = {}, returnBlob = false, monedaPDF = '$', tasa = 0, tasaUsdt = 0, tasaBcv = 0, conIVA = false }) {
   const doc = new jsPDF({ unit: 'mm', format: 'letter', orientation: 'portrait' })
@@ -31,8 +31,7 @@ export async function generarPDF({ cotizacion, items = [], config = {}, returnBl
     doc.rect(0, 0, PAGE_W, HDR_H, 'F')
 
     // Decoraciones: Cuadrícula de puntos
-    const vColor = hexToRgb(cotizacion.vendedor?.color)
-    doc.setFillColor(...vColor)
+    doc.setFillColor(...C_ACCENT)
     for(let i = 0; i < 4; i++) {
       for(let j = 0; j < 6; j++) {
         doc.circle(MARGIN + i * 2.5, 4 + j * 2.5, 0.4, 'F')
@@ -106,14 +105,20 @@ export async function generarPDF({ cotizacion, items = [], config = {}, returnBl
       try { doc.addImage(logoData, 'PNG', MARGIN + 11, 3, 34, 34) } catch (_) {}
     }
 
+    let n = config.nombre_negocio || 'Listo POS C.A.'
+    if (!n || n.trim().toUpperCase() === 'PRUEBA' || n.trim() === '') n = 'Listo POS C.A.'
+    const words = n.split(' ')
+    const main = (words[0] || 'LISTO').toUpperCase()
+    const secondary = words.slice(1).join(' ').toUpperCase() || 'POS C.A.'
+
     // Títulos Negocio
     const textCenterX = (MARGIN + 44 + PAGE_W - MARGIN - 40) / 2
     doc.setFont('times', 'bold')
-    doc.setTextColor(...C_WHITE)
+    doc.setTextColor(...C_ACCENT)
     doc.setFontSize(24)
-    doc.text('CONSTRUACERO', textCenterX, 18, { align: 'center' })
+    doc.text(main, textCenterX, 18, { align: 'center' })
     doc.setFontSize(16)
-    doc.text('CARABOBO C.A.', textCenterX, 27, { align: 'center' })
+    doc.text(secondary, textCenterX, 27, { align: 'center' })
 
     // "Cotización" + número
     doc.setFontSize(13)
@@ -137,6 +142,8 @@ export async function generarPDF({ cotizacion, items = [], config = {}, returnBl
   // 2. DATOS DEL CLIENTE — cuadrícula con celdas
   // ══════════════════════════════════════════════════════════════════════════
   const cliente = cotizacion.cliente || {}
+  const esPersonal = cliente.tipo_cliente === 'personal'
+  const descPersonalPct = esPersonal ? (config.descuento_personal_pct ?? 10) : 0
 
   // Encabezado tipo "COTIZACIÓN:" - Rediseñado para el Formalismo Industrial
   const cotBarY = y - 4
@@ -180,7 +187,10 @@ export async function generarPDF({ cotizacion, items = [], config = {}, returnBl
   y += ROW_H_INFO
 
   // Fila 2: Cliente | R.I.F / Cédula
-  drawCell(MARGIN, y, halfW, 'Cliente', (cliente.nombre || '').toUpperCase())
+  const nameDisplay = cliente.tipo_cliente === 'personal'
+    ? `${(cliente.nombre || '').toUpperCase()} (PERSONAL)`
+    : (cliente.nombre || '').toUpperCase()
+  drawCell(MARGIN, y, halfW, 'Cliente', nameDisplay)
   drawCell(MARGIN + halfW, y, halfW, 'R.I.F / Cédula', cliente.rif_cedula)
   y += ROW_H_INFO
 
@@ -252,7 +262,7 @@ export async function generarPDF({ cotizacion, items = [], config = {}, returnBl
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(9.5)
-  doc.setTextColor(...C_WHITE)
+  doc.setTextColor(...C_ACCENT)
   COLS.forEach(col => {
     let tx = col.x + 2
     if (col.align === 'center') tx = col.x + col.w/2
@@ -299,7 +309,7 @@ export async function generarPDF({ cotizacion, items = [], config = {}, returnBl
        doc.rect(MARGIN, y, CONTENT_W, 9, 'F')
        doc.setFont('helvetica', 'bold')
        doc.setFontSize(9.5)
-       doc.setTextColor(...C_WHITE)
+       doc.setTextColor(...C_ACCENT)
        COLS.forEach(col => {
          let tx = col.x + 2
          if (col.align === 'center') tx = col.x + col.w / 2
@@ -348,8 +358,19 @@ export async function generarPDF({ cotizacion, items = [], config = {}, returnBl
     })()
 
     const tasaEfectiva = tasa > 0 ? tasa : Number(cotizacion.tasa_bcv_snapshot || 0)
-    const precioText = fmtPrecio(item.precio_unit_usd, monedaPDF, tasaEfectiva, factorBcv)
-    const totalText = fmtPrecio(item.total_linea_usd, monedaPDF, tasaEfectiva, factorBcv)
+    let precioUnitarioAMostrar = Number(item.precio_unit_usd || 0)
+    let totalLineaAMostrar = Number(item.total_linea_usd || 0)
+
+    const isCorte = (item.nombre_snap || '').toUpperCase().includes('CORTE') || (item.codigo_snap || '').startsWith('CRT')
+    const esServicio = isFlete || isCorte || item.isExento === true || item.tiene_descuento === false
+
+    if (esPersonal && descPersonalPct > 0 && !esServicio) {
+      precioUnitarioAMostrar = Math.round((precioUnitarioAMostrar / (1 - descPersonalPct / 100)) * 100) / 100
+      totalLineaAMostrar = precioUnitarioAMostrar * Number(item.cantidad || 0)
+    }
+
+    const precioText = fmtPrecio(precioUnitarioAMostrar, monedaPDF, tasaEfectiva, factorBcv)
+    const totalText = fmtPrecio(totalLineaAMostrar, monedaPDF, tasaEfectiva, factorBcv)
 
     // Auto-reducir fuente si el precio no cabe en la columna
     const fitText = (text, col, baseFontSize, bold) => {
@@ -378,6 +399,10 @@ export async function generarPDF({ cotizacion, items = [], config = {}, returnBl
   const bTotX = PAGE_W - MARGIN - bTotW
   const bLeftW = bTotX - MARGIN - 5
   const bConds = ['Precios Sujetos a cambios sin previo aviso.', 'El cliente se encarga de descargar la mercancía.']
+  if (esPersonal) {
+    const descPct = config.descuento_personal_pct ?? 10
+    bConds.push(`Descuento de Personal del ${descPct}% desglosado en el total.`)
+  }
   const bCP = 2, bCTH = 6, bCLH = 5.0
   const bBoxH = bCTH + bConds.length * bCLH + bCP * 2 + 1 // Altura bloque Condiciones
   
@@ -393,15 +418,36 @@ export async function generarPDF({ cotizacion, items = [], config = {}, returnBl
   const ivaAmount = baseImponible * (ivaPct / 100)
   const totalFacturaFinal = conIVA ? (bTot + ivaAmount) : bTot
 
+  let subtotalOriginal = bSub
+  let descuentoPersonal = 0
+
+  if (esPersonal && descPersonalPct > 0) {
+    let sumOriginal = 0
+    items.forEach(it => {
+      const cant = Number(it.cantidad || 0)
+      const precio = Number(it.precio_unit_usd || 0)
+      const precioOrig = Math.round((precio / (1 - descPersonalPct / 100)) * 100) / 100
+      sumOriginal += precioOrig * cant
+    })
+    subtotalOriginal = sumOriginal
+    descuentoPersonal = Math.max(0, subtotalOriginal - bSub)
+  }
+
   const bLines = []
   if (conIVA) {
-    bLines.push({ label: 'Subtotal:', val: fmtPrecio(bSub, monedaPDF, bTasa, factorBcv) })
+    bLines.push({ label: 'Subtotal:', val: fmtPrecio(subtotalOriginal, monedaPDF, bTasa, factorBcv) })
+    if (esPersonal && descPersonalPct > 0) {
+      bLines.push({ label: `Desc. Personal (${descPersonalPct}%):`, val: '-' + fmtPrecio(descuentoPersonal, monedaPDF, bTasa, factorBcv), color: [180, 100, 0] })
+    }
     if (bDesc > 0) bLines.push({ label: 'Descuento:', val: '-' + fmtPrecio(bDesc, monedaPDF, bTasa, factorBcv), color: [220, 38, 38] })
     if (bExento > 0) bLines.push({ label: 'Exento:', val: fmtPrecio(bExento, monedaPDF, bTasa, factorBcv), color: [50, 100, 180] })
     bLines.push({ label: 'Base Gravable:', val: fmtPrecio(baseImponible, monedaPDF, bTasa, factorBcv) })
     bLines.push({ label: `IVA ${ivaPct}%:`, val: fmtPrecio(ivaAmount, monedaPDF, bTasa, factorBcv) })
   } else {
-    bLines.push({ label: 'Subtotal:', val: fmtPrecio(bSub, monedaPDF, bTasa, factorBcv) })
+    bLines.push({ label: 'Subtotal:', val: fmtPrecio(subtotalOriginal, monedaPDF, bTasa, factorBcv) })
+    if (esPersonal && descPersonalPct > 0) {
+      bLines.push({ label: `Desc. Personal (${descPersonalPct}%):`, val: '-' + fmtPrecio(descuentoPersonal, monedaPDF, bTasa, factorBcv), color: [180, 100, 0] })
+    }
     if (bDesc > 0) bLines.push({ label: 'Descuento:', val: '-' + fmtPrecio(bDesc, monedaPDF, bTasa, factorBcv), color: [220, 38, 38] })
     if (bExento > 0) bLines.push({ label: 'Exento:', val: fmtPrecio(bExento, monedaPDF, bTasa, factorBcv), color: [50, 100, 180] })
   }
@@ -423,7 +469,7 @@ export async function generarPDF({ cotizacion, items = [], config = {}, returnBl
 
   // Verificamos si todo esto cabe
   const totalNeededH = (notasH > 0 ? notasH + 2 : 0) + blockH + 2 + 8 // 8 = altura slogan
-  y = checkPage(doc, y, totalNeededH, (d) => drawSimplifiedHeader(d, logoData, config, `Cotización (Cont.) ${numDisplay}`, C_PRIMARY))
+  y = checkPage(doc, y, totalNeededH, (d) => drawSimplifiedHeader(d, logoData, config, `Cotización (Cont.) ${numDisplay}`, C_PRIMARY, C_ACCENT))
 
   // ── Slogan — fijo 10mm sobre el footer (PAGE_H - 35) ──
   const sloganY = PAGE_H - 35
@@ -440,7 +486,7 @@ export async function generarPDF({ cotizacion, items = [], config = {}, returnBl
     const notasStartY = finalY - 2 - notasH
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(9.5)
-    doc.setTextColor(...C_ACCENT)
+    doc.setTextColor(...C_PRIMARY)
     doc.text('NOTAS:', MARGIN, notasStartY + 4)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(9)
@@ -451,7 +497,7 @@ export async function generarPDF({ cotizacion, items = [], config = {}, returnBl
   }
 
   // DIBUJAR CONDICIONES (Modular card de Formalismo Industrial con barra lateral sólida)
-  doc.setFillColor(248, 250, 252) // Fondo gris/azul muy suave
+  doc.setFillColor(255, 255, 255) // Fondo blanco
   doc.setDrawColor(226, 232, 240) // Borde sutil
   doc.setLineWidth(0.3)
   doc.roundedRect(MARGIN, finalY, bLeftW, bBoxH, 1.5, 1.5, 'FD')
@@ -462,7 +508,7 @@ export async function generarPDF({ cotizacion, items = [], config = {}, returnBl
   
   // Ajustamos el padding horizontal (leftPad) para que el texto respete la barra de acento
   const leftPad = 4.5
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...C_PRIMARY)
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...C_DARK)
   doc.text('CONDICIONES GENERALES:', MARGIN + leftPad, finalY + bCP + 4.5)
   doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.3)
   doc.line(MARGIN + leftPad, finalY + bCP + bCTH, MARGIN + bLeftW - bCP, finalY + bCP + bCTH)
@@ -480,7 +526,7 @@ export async function generarPDF({ cotizacion, items = [], config = {}, returnBl
     bTy += bLH
   })
   doc.setFillColor(...C_PRIMARY); doc.rect(bTotX, bTy - 2, bTotW, 10, 'F')
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(...C_WHITE)
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(...C_ACCENT)
   doc.text(conIVA ? 'Total Cotiz.' : 'Total:', bTotX + 4, bTy + 5)
   doc.text(fmtTotal(totalFacturaFinal, monedaPDF, bTasa, factorBcv), bTotX + bTotW - 4, bTy + 5, { align: 'right' })
 
@@ -524,10 +570,10 @@ export async function generarPDF({ cotizacion, items = [], config = {}, returnBl
 
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(8.5)
-    doc.setTextColor(...C_WHITE)
+    doc.setTextColor(...C_DARK)
 
-    const addr1 = 'Av. 76, (Calle S-3) Nro. 70-C-766, Local Galpón Nro. 3 Edificio Centro Industrial Massico II'
-    const addr2 = 'Parcela MB-6 y Mb7, Urb. Industrial Aeropuerto Vía Flor Amarillo, Valencia, Edo. Carabobo, Zona Postal 2003'
+    const addr1 = config.direccion_negocio || 'Dirección Comercial'
+    const addr2 = config.pie_pagina_pdf || (config.rif_negocio ? `RIF: ${config.rif_negocio}` : '')
 
     // Pin a la izquierda de addr1 (reajustado verticalmente)
     const addr1W = doc.getTextWidth(addr1)
@@ -576,7 +622,7 @@ export async function generarPDF({ cotizacion, items = [], config = {}, returnBl
           doc.line(cx, cy - 1.8, cx + 1.2, cy - 0.6)
           doc.line(cx + 2.4, cy - 1.8, cx + 1.2, cy - 0.6)
         }
-        doc.setTextColor(...C_WHITE)
+        doc.setTextColor(...C_DARK)
         doc.text(p.text, cx + 4, cy)
         cx += 5 + doc.getTextWidth(p.text) + gap
       })

@@ -1,5 +1,5 @@
 // src/services/pdf/pdfShared.js
-// Utilidades compartidas para generación de PDFs — Construacero Carabobo
+// Utilidades compartidas para generación de PDFs — Listo POS
 import { WATERMARK_LOGO } from './watermarkBase64'
 
 // ─── Layout ──────────────────────────────────────────────────────────────────
@@ -44,16 +44,24 @@ export function fmtBcvUsd(n) {
 /** Formatea fecha corta dd/mm/yyyy. Variante 'short-month' usa mes abreviado. */
 export function fmtFecha(f, variant) {
   if (!f) return '—'
+  let dateObj
+  if (f instanceof Date) {
+    dateObj = f
+  } else {
+    const dateStr = String(f).includes('T') ? String(f) : `${f}T12:00:00`
+    dateObj = new Date(dateStr)
+    if (isNaN(dateObj.getTime())) {
+      dateObj = new Date(f)
+    }
+  }
+
   if (variant === 'short-month') {
-    return new Date(f).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })
+    return dateObj.toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })
   }
   if (variant === 'short') {
-    return new Date(f).toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: '2-digit' })
+    return dateObj.toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: '2-digit' })
   }
-  // Default: normaliza fechas sin timezone para evitar off-by-one
-  return new Date(f + (String(f).includes('T') ? '' : 'T12:00:00')).toLocaleDateString('es-VE', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-  })
+  return dateObj.toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
 export function fmtFechaCorta(f) {
@@ -201,8 +209,8 @@ export function drawSimplifiedHeader(doc, logoData, config, rightTitle = '', cus
     try { doc.addImage(logoData, 'PNG', MARGIN + 4, 0.75, 10.5, 10.5, 'HEADER_LOGO', 'FAST') } catch (_) {}
   }
 
-  let n = config.nombre_negocio || 'CONSTRUACERO CARABOBO C.A.'
-  if (!n || n.trim().toUpperCase() === 'PRUEBA' || n.trim() === '') n = 'CONSTRUACERO CARABOBO C.A.'
+  let n = config.nombre_negocio || 'Listo POS C.A.'
+  if (!n || n.trim().toUpperCase() === 'PRUEBA' || n.trim() === '') n = 'Listo POS C.A.'
   
   doc.setFont('times', 'bold')
   doc.setFontSize(15.5)
@@ -227,7 +235,7 @@ export function drawSimplifiedHeader(doc, logoData, config, rightTitle = '', cus
 }
 
 /**
- * Dibuja el encabezado premium con el estilo Construacero (hazard stripes, puntos y blueprint markers).
+ * Dibuja el encabezado premium con el estilo Listo POS (hazard stripes, puntos y blueprint markers).
  */
 export function drawPremiumHeader({
   doc,
@@ -316,11 +324,11 @@ export function drawPremiumHeader({
   }
 
   // Títulos de negocio centrado
-  let n = config.nombre_negocio || 'CONSTRUACERO CARABOBO C.A.'
-  if (!n || n.trim().toUpperCase() === 'PRUEBA' || n.trim() === '') n = 'CONSTRUACERO CARABOBO C.A.'
+  let n = config.nombre_negocio || 'Listo POS C.A.'
+  if (!n || n.trim().toUpperCase() === 'PRUEBA' || n.trim() === '') n = 'Listo POS C.A.'
   const words = n.split(' ')
-  const main = (words[0] || 'CONSTRUACERO').toUpperCase()
-  const secondary = words.slice(1).join(' ').toUpperCase() || 'CARABOBO C.A.'
+  const main = (words[0] || 'LISTO').toUpperCase()
+  const secondary = words.slice(1).join(' ').toUpperCase() || 'POS C.A.'
   
   doc.setFont('times', 'bold'); doc.setTextColor(...(customTextColor || C_WHITE))
   if (centerBusinessName) {
@@ -388,8 +396,8 @@ export function drawPremiumFooter(doc, config, customBgColor = [255, 255, 255], 
       doc.setFontSize(8.5)
       doc.setTextColor(...customTextColor)
 
-      const addr1 = 'Av. 76, (Calle S-3) Nro. 70-C-766, Local Galpón Nro. 3 Edificio Centro Industrial Massico II'
-      const addr2 = 'Parcela MB-6 y Mb7, Urb. Industrial Aeropuerto Vía Flor Amarillo, Valencia, Edo. Carabobo, Zona Postal 2003'
+      const addr1 = config.direccion_negocio || 'Dirección Comercial'
+      const addr2 = config.pie_pagina_pdf || (config.rif_negocio ? `RIF: ${config.rif_negocio}` : '')
 
       const addr1W = doc.getTextWidth(addr1)
       const addr1X = pw / 2 - addr1W / 2

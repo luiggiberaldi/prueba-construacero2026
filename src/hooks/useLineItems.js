@@ -39,7 +39,7 @@ export function useLineItems({ withDescuento = false, checkStock = false } = {})
         }
         return prev.map((it, i) => i === idx ? { ...it, cantidad: it.cantidad + 1 } : it)
       }
-      // Nuevo item
+      const precioBase = Number(producto.precio_usd ?? producto.preciousd ?? 0)
       const item = {
         _key: `item-${++_itemCounter}`,
         productoId: producto.id,
@@ -47,7 +47,8 @@ export function useLineItems({ withDescuento = false, checkStock = false } = {})
         nombreSnap: producto.nombre,
         unidadSnap: producto.unidad ?? 'und',
         cantidad: Number(producto.cantidad_inicial ?? producto.cantidadinicial ?? 1),
-        precioUnitUsd: Number(producto.precio_usd ?? producto.preciousd ?? 0),
+        precioUnitUsd: precioBase,
+        precioOriginalUsd: Number(producto.precioOriginalUsd ?? producto.precio_original_usd ?? precioBase),
         origen: producto.origen ?? 'inventario',
         categoria: producto.categoria ?? '',
         esPrestamo: producto.esPrestamo ?? producto.es_prestamo ?? false,
@@ -99,10 +100,13 @@ export function useLineItems({ withDescuento = false, checkStock = false } = {})
     })
   }, [checkStock])
 
-  const cambiarPrecio = useCallback((productoId, precio) => {
-    setItems(prev => prev.map(it =>
-      it.productoId === productoId ? { ...it, precioUnitUsd: Math.max(0, Number(precio) || 0) } : it
-    ))
+  const cambiarPrecio = useCallback((productoId, precio, precioOriginal) => {
+    setItems(prev => prev.map(it => {
+      if (it.productoId !== productoId) return it
+      const pUnit = Math.max(0, Number(precio) || 0)
+      const pOrig = precioOriginal !== undefined ? precioOriginal : pUnit
+      return { ...it, precioUnitUsd: pUnit, precioOriginalUsd: pOrig }
+    }))
   }, [])
 
   const togglePrestamo = useCallback((productoId) => {

@@ -28,10 +28,13 @@ export async function generarPlantillaNotaEntregaPDF({ config = {} } = {}) {
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(17)
     doc.setTextColor(...C_DARK)
-    doc.text('CONSTRUACERO CARABOBO, C.A.', centerX, 16, { align: 'center' })
+    let n = config.nombre_negocio || 'Listo POS C.A.'
+    if (!n || n.trim().toUpperCase() === 'PRUEBA' || n.trim() === '') n = 'Listo POS C.A.'
+    doc.text(n.toUpperCase(), centerX, 16, { align: 'center' })
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(10)
-    doc.text('RIF.: J-50115913-0', centerX, 22, { align: 'center' })
+    let r = config.rif_negocio ? `RIF: ${config.rif_negocio}` : ''
+    doc.text(r, centerX, 22, { align: 'center' })
     doc.setLineWidth(0.8)
     doc.setDrawColor(...C_DARK)
     doc.line(MARGIN, HDR_H + 10, PAGE_W - MARGIN, HDR_H + 10)
@@ -307,9 +310,11 @@ export async function generarPlantillaNotaEntregaPDF({ config = {} } = {}) {
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(7)
     doc.setTextColor(...C_DARK)
-    doc.text('Av. 76, (Calle S-3) Nro. 70-C-766, Local Galpón Nro. 3 Edificio Centro Industrial Massico II', PAGE_W / 2, footerY + 5, { align: 'center' })
+    const addr1 = config.direccion_negocio || 'Dirección Comercial'
+    const addr2 = config.pie_pagina_pdf || (config.rif_negocio ? `RIF: ${config.rif_negocio}` : '')
+    doc.text(addr1, PAGE_W / 2, footerY + 5, { align: 'center' })
     doc.setFont('helvetica', 'normal')
-    doc.text('Parcela MB-6 y Mb7, Urb. Industrial Aeropuerto Vía Flor Amarillo, Valencia, Edo. Carabobo, Zona Postal 2003', PAGE_W / 2, footerY + 9, { align: 'center' })
+    doc.text(addr2, PAGE_W / 2, footerY + 9, { align: 'center' })
 
     const tel = fmtTelefono(config.telefono_negocio) || ''
     const email = config.email_negocio || ''

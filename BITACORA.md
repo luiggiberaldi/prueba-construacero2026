@@ -436,7 +436,7 @@ Conectar el proyecto al repositorio GitHub real y escribir las 15 migrations SQL
 ### Acciones realizadas
 
 **1. Configuración de Git:**
-- Remote origin actualizado a `https://github.com/luiggiberaldi/prueba-construacero2026`
+- Remote origin actualizado a `https://github.com/luiggiberaldi/listo-pos-cotizaciones`
 - Commit 1: `feat: estructura base + autenticación por roles (Fases 1 y 2)` — 260 archivos
   - Eliminados: android/, capacitor, PWA, componentes POS, hooks viejos, Groq
   - Creados: ARQUITECTURA.md, BITACORA.md, estructura de módulos, auth completo
@@ -1173,7 +1173,7 @@ El Worker de camelAI NO tiene los secrets de Supabase y causará errores 500.
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `VAPID_PUBLIC_KEY` — Texto plano (no sensibles)
 - `GROQ_KEYS_A/B/C` — Se inyectan desde `deploy.sh` vía `.dev.vars` (solo en camelAI)
 
-**GitHub Secrets** (repo `luiggiberaldi/prueba-construacero2026`):
+**GitHub Secrets** (repo `luiggiberaldi/listo-pos-cotizaciones`):
 - `CF_API_TOKEN` — Token de Cloudflare para deploy
 - `CF_ACCOUNT_ID` — Account ID de Cloudflare
 - `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` — Duplicados (mismo propósito)
@@ -1754,5 +1754,77 @@ Añadir soporte para visualizar vendedores externos en el reporte de vendedores 
 
 ---
 
+## SESIÓN 15/06/2026 — Fase 1 de Comisiones Proporcionales
+
+### Objetivo
+Iniciar la implementación de la Fase 1 del plan de comisiones proporcionales en pagos mixtos, agregando las nuevas columnas y la tabla de historial de liberaciones.
+
+### Cambios realizados
+
+#### 1. Migraciones de Base de Datos (`supabase/migrations/183_comisiones_columnas_liberacion.sql`)
+- Creado el archivo de migración aditiva para añadir las columnas `comision_liberada` y `comision_retenida` a la tabla `public.comisiones`.
+- Creada la tabla `public.comision_liberaciones` para registrar los eventos fechados de liberación (contado y abonos).
+- Agregados los índices correspondientes (`idx_comision_liberaciones_fecha` y `idx_comision_liberaciones_comision`).
+- Habilitado Row Level Security (RLS) y configurada la política de select restrictiva basada en el rol y el vendedor asignado.
+- Otorgados permisos de select al rol `authenticated`.
+
+### Verificación
+- Migración creada y guardada en la ruta de migrations.
+
+#### 2. Migraciones de Base de Datos (`supabase/migrations/184_calc_comision_split.sql`) (Fase 2)
+- Re-definida la función de base de datos `calcularcomisiondespacho` para admitir el split proporcional en pagos mixtos.
+- Al aprobarse un despacho, calcula la proporción pagada de contado y la porción a crédito basándose en las CxC generadas.
+- Inserta los montos correspondientes en `comision_liberada` y `comision_retenida` e introduce un evento de tipo `'contado'` en `comision_liberaciones` si existe una parte cobrada de inmediato.
+
+#### 3. Migraciones de Base de Datos (`supabase/migrations/185_trigger_liberacion_proporcional.sql`) (Fase 3)
+- Re-definida la función trigger `public.trg_liberar_comision_por_pago` y recreados los triggers en la tabla `public.cuentas_por_cobrar`.
+- El trigger se activa al insertar, actualizar o eliminar registros en cuentas por cobrar.
+- Calcula la fracción liberada basada en la fórmula matemática proporcional monótona, actualiza `comision_liberada` y `comision_retenida` en la tabla `comisiones`, actualiza el estado de la comisión a `cta_cobrar` o `pendiente`, y registra un evento de tipo `'abono'` en la tabla `comision_liberaciones` por el monto incremental.
+- Se eliminó la lógica legacy de liberación global por cliente (Caso 2) para evitar sobre-liberación y duplicados.
+
+#### 4. Migraciones de Base de Datos (`supabase/migrations/186_backfill_comisiones_liberacion.sql`) (Fase 4)
+- Creado el script SQL para inicializar el estado de comisiones existentes en la base de datos.
+- Las comisiones ya pagadas o pendientes (liberadas por completo) se marcan con `comision_liberada = totalcomision` and `comision_retenida = 0`.
+- Las comisiones en estado `cta_cobrar` se inicializan con `comision_liberada = 0` y `comision_retenida = totalcomision` (para liberarse dinámicamente con los próximos abonos).
+- Registra eventos históricos de tipo `'contado'` en `comision_liberaciones` para todas las comisiones ya liberadas en el pasado, fechados con la creación del despacho correspondiente para evitar distorsiones temporales en reportes actuales.
+
+#### 5. Migraciones de Base de Datos (`supabase/migrations/187_resumen_comisiones_por_liberacion.sql`) (Fase 5)
+- Redefinida la RPC `obtener_resumen_comisiones_v2` para que agrupe y filtre métricas a partir de la tabla de eventos de liberación (`comision_liberaciones`), filtrando por la fecha del evento (`creado_en`) en vez de la fecha del despacho.
+- Se implementó un algoritmo FIFO en SQL para calcular exactamente cuánto del monto liberado y pendiente en el período actual ha sido cubierto por los pagos registrados (`montopagado`) a nivel de la comisión global, garantizando consistencia matemática impecable en la UI (Total Liberado = Pendiente de Pago + Ya Pagado en el período).
+
+#### 6. Backend y Hook de Frontend: Pagar solo lo liberado (Fase 6)
+- **Modificado handler backend (`api/handlers/comisiones.js`):**
+  - En `handleMarcarComisionPagada`: se valida que el monto a registrar no supere `comision_liberada` ni sea menor que el `montopagado` actual. Si no se provee monto, liquida automáticamente hasta el total de `comision_liberada`.
+  - El estado final cambia a `'pagada'` solo si se liquidó la totalidad de la comisión liberada y no queda saldo retenido por CxC (`comision_retenida <= 0.01`). Si hay saldo retenido, se mantiene en `'cta_cobrar'`. Si está totalmente liberada pero el pago es parcial, queda en `'pendiente'`.
+  - En `handleGetComisiones`: se agregó la selección y mapeo de `comision_liberada` y `comision_retenida` en el listado de comisiones.
+- **Modificado hook frontend (`src/hooks/useComisiones.js`):**
+  - Mapeado y parseado correcto de `comision_liberada` y `comision_retenida` como valores numéricos en el frontend.
+
+---
+
+## SESIÓN 15/06/2026 — Fase 7: PDF de Comisiones por Eventos de Liberación (completada)
+
+### Objetivo
+Modificar la generación y exportación del reporte de comisiones en PDF para que liste y totalice eventos individuales de liberación de comisión (`comision_liberaciones`), en lugar del listado histórico consolidado de comisiones completas. Esto asegura consistencia temporal (por ejemplo, ver en el período actual la liberación de comisiones de abonos de despachos antiguos).
+
+### Cambios realizados
+
+#### 1. Servicio de PDF (`src/services/pdf/comisionesPDF.js`)
+- En `normalizarComision`, se actualizó la proporción de cabilla para ser siempre proporcional (`totalcomision * (comisioncabilla / com.totalcomision)`) en todos los eventos (tanto `'contado'` como `'abono'`).
+- El filtro de comisiones se ajustó para permitir eventos (que tienen `tipo !== undefined`) y mantener compatibilidad con comisiones normales (`c.estado !== 'cta_cobrar'`).
+
+#### 2. Vistas de Exportación (`src/views/ComisionesView.jsx` y `src/views/ReportesView.jsx`)
+- Se importó el cliente de Supabase (`supabase`).
+- Se reescribieron las funciones de exportación `exportarPDF` (individual/general) y `exportarIndividualPDF` para:
+  1. Consultar de forma asíncrona la tabla `comision_liberaciones` haciendo un `!inner` join con `comisiones` (para obtener las tasas, porcentajes, total de comisiones y despacho asociado con la info del cliente).
+  2. Filtrar por rango de fechas (desde/hasta) usando `creado_en` con zona horaria de Venezuela (`-04:00`).
+  3. Consultar las cotizaciones en una segunda consulta en JS usando un set de IDs únicos para resolver los nombres de clientes y tasas de cotización (evitando duplicaciones y queries complejas).
+  4. Mapear los registros en el formato esperado por `generarComisionesPDF` para mantener total compatibilidad con los reportes resumido/detallado y gráficos de distribución.
+
+### Verificación
+- Compilación de producción en proceso.
+
 *Mantener este archivo actualizado al inicio y fin de cada sesión de trabajo.*
+
+
 

@@ -825,7 +825,7 @@ export default function TesterFlowView() {
     await apiCall('/api/cxc/abono', 'POST', {
       clienteId: dataRef.current.clienteId,
       monto: montoAbono,
-      formaPago: 'Transferencia',
+      formaPago: 'Transf. / Pago Móvil',
       referencia: 'TEST-DET-001',
       descripcion: 'Abono test determinista',
     })

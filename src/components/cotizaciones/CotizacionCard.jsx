@@ -14,7 +14,6 @@ import { getAction, PRIMARY_ACTION_COLORS } from '../../utils/cotizacionActions'
 import { apiUrl } from '../../services/apiBase'
 import DetalleModal from '../ui/DetalleModal'
 import { showToast } from '../ui/Toast'
-import { getOfflineDocument } from '../../lib/offlineDocuments'
 
 // Helper: fetch cliente via Worker API (bypasses RLS)
 async function fetchClienteViaAPI(clienteId) {
@@ -46,10 +45,9 @@ async function fetchClienteViaAPI(clienteId) {
 
 export default memo(function CotizacionCard({ cotizacion, onEditar, onAnular, onCambiarEstado, onDespachar, onReciclar, onClonar, onCambiarEstadoDespacho, tasa = 0 }) {
   const navigate = useNavigate()
-  const { perfil, offline } = useAuthStore()
+  const { perfil } = useAuthStore()
   const esSupervisor = (perfil?.rol === 'supervisor' || perfil?.rol === 'jefe')
   const esAdministracion = perfil?.rol === 'administracion'
-  const puedeGestionarDespacho = ['administracion', 'jefe', 'desarrollador', 'logistica'].includes(perfil?.rol)
   const rol = perfil?.rol || 'vendedor'
   const esBorrador = cotizacion.estado === 'borrador'
   const esEnviada  = cotizacion.estado === 'enviada'
@@ -61,8 +59,8 @@ export default memo(function CotizacionCard({ cotizacion, onEditar, onAnular, on
   const [showDownloadMenu, setShowDownloadMenu] = useState(false)
   const [showWhatsAppMenu, setShowWhatsAppMenu] = useState(false)
   const [showAdminMenu, setShowAdminMenu] = useState(false)
-  const [monedaPdf, setMonedaPdf] = useState(() => localStorage.getItem('construacero_moneda_pdf') || '$')
-  const [conIva, setConIva] = useState(() => localStorage.getItem('construacero_con_iva') === 'true')
+  const [monedaPdf, setMonedaPdf] = useState(() => localStorage.getItem('listopos_moneda_pdf') || '$')
+  const [conIva, setConIva] = useState(() => localStorage.getItem('listopos_con_iva') === 'true')
   const { data: config = {} } = useConfigNegocio()
   const { tasaBcv, tasaUsdt } = useTasaCambio()
   const printBtnRef = useRef(null)
@@ -74,7 +72,7 @@ export default memo(function CotizacionCard({ cotizacion, onEditar, onAnular, on
 
   function seleccionarMoneda(moneda) {
     setMonedaPdf(moneda)
-    localStorage.setItem('construacero_moneda_pdf', moneda)
+    localStorage.setItem('listopos_moneda_pdf', moneda)
   }
 
   const MONEDA_OPTIONS = [
@@ -85,57 +83,24 @@ export default memo(function CotizacionCard({ cotizacion, onEditar, onAnular, on
 
   const monedaLabel = MONEDA_OPTIONS.find(o => o.key === monedaPdf)?.label || 'USDT ($)'
 
-  async function obtenerDatosPDF() {
-    if (String(cotizacion.id).startsWith('local_') || cotizacion._local || cotizacion._queued) {
-      const doc = await getOfflineDocument('cotizacion', cotizacion.id)
-      if (doc?.cotizacion) {
-        return {
-          cotConDatos: {
-            ...doc.cotizacion,
-            numero: doc.cotizacion.numero || 'LOCAL',
-            cliente: doc.cotizacion.cliente || cotizacion.cliente,
-            vendedor: doc.cotizacion.vendedor || cotizacion.vendedor,
-          },
-          items: doc.items || [],
-        }
-      }
-      return { cotConDatos: cotizacion, items: cotizacion.items || [] }
-    }
-
-    const [itemsRes, clienteData, vendedorRes] = await Promise.all([
-      supabase.from('cotizacion_items').select('cantidad, codigo_snap, nombre_snap, unidad_snap, precio_unit_usd, descuento_pct, total_linea_usd, orden').eq('cotizacion_id', cotizacion.id).order('orden'),
-      fetchClienteViaAPI(cotizacion.cliente_id),
-      cotizacion.vendedor_id ? supabase.from('usuarios').select('id, nombre, color, telefono, markup_pct, es_externo').eq('id', cotizacion.vendedor_id).single() : Promise.resolve({ data: null }),
-    ])
-    if (itemsRes.error) throw itemsRes.error
-    return {
-      cotConDatos: {
+  async function descargarPDF() {
+    setPdfLoading(true)
+    try {
+      const [{ generarPDF }, itemsRes, clienteData, vendedorRes] = await Promise.all([
+        import('../../services/pdf/cotizacionPDF'),
+        supabase.from('cotizacion_items').select('cantidad, codigo_snap, nombre_snap, unidad_snap, precio_unit_usd, descuento_pct, total_linea_usd, orden').eq('cotizacion_id', cotizacion.id).order('orden'),
+        fetchClienteViaAPI(cotizacion.cliente_id),
+        cotizacion.vendedor_id ? supabase.from('usuarios').select('id, nombre, color, telefono, markup_pct, es_externo').eq('id', cotizacion.vendedor_id).single() : Promise.resolve({ data: null }),
+      ])
+      if (itemsRes.error) throw itemsRes.error
+      const cotConDatos = {
         ...cotizacion,
         cliente: clienteData || cotizacion.cliente,
         vendedor: vendedorRes.data || cotizacion.vendedor,
-      },
-      items: itemsRes.data ?? [],
-    }
-  }
-
-  async function descargarPDF() {
-    if ((offline || !navigator.onLine) && !String(cotizacion.id).startsWith('local_') && !cotizacion._local && !cotizacion._queued) {
-      showToast('Estás offline. La descarga de PDF estará disponible cuando te conectes.', 'warning')
-      return
-    }
-    setPdfLoading(true)
-    try {
-      const [{ generarPDF }, dataPDF] = await Promise.all([
-        import('../../services/pdf/cotizacionPDF'),
-        obtenerDatosPDF(),
-      ])
-      await generarPDF({ cotizacion: dataPDF.cotConDatos, items: dataPDF.items, config, monedaPDF: monedaPdf, tasa, tasaUsdt: tasaUsdt.precio, tasaBcv: tasaBcv.precio, conIVA: conIva })
-    } catch (err) {
-      if (err.message?.includes('dynamically imported module') || err.message?.includes('Failed to fetch')) {
-        showToast('Estás offline. La descarga de PDF estará disponible cuando te conectes.', 'warning')
-      } else {
-        showToast('Error al descargar PDF: ' + (err.message || 'Error desconocido'), 'error')
       }
+      await generarPDF({ cotizacion: cotConDatos, items: itemsRes.data ?? [], config, monedaPDF: monedaPdf, tasa, tasaUsdt: tasaUsdt.precio, tasaBcv: tasaBcv.precio, conIVA: conIva })
+    } catch (err) {
+      showToast('Error al generar PDF: ' + (err.message || 'Error desconocido'), 'error')
     } finally {
       setPdfLoading(false)
     }
@@ -171,43 +136,30 @@ export default memo(function CotizacionCard({ cotizacion, onEditar, onAnular, on
   }
 
   async function imprimirCotizacion() {
-    if ((offline || !navigator.onLine) && !String(cotizacion.id).startsWith('local_') && !cotizacion._local && !cotizacion._queued) {
-      showToast('Estás offline. La impresión estará disponible cuando te conectes.', 'warning')
-      return
-    }
     setPrintLoading(true)
     try {
-      const [{ generarPDF }, dataPDF] = await Promise.all([
+      const [{ generarPDF }, itemsRes, clienteData, vendedorRes] = await Promise.all([
         import('../../services/pdf/cotizacionPDF'),
-        obtenerDatosPDF(),
+        supabase.from('cotizacion_items').select('cantidad, codigo_snap, nombre_snap, unidad_snap, precio_unit_usd, descuento_pct, total_linea_usd, orden').eq('cotizacion_id', cotizacion.id).order('orden'),
+        fetchClienteViaAPI(cotizacion.cliente_id),
+        cotizacion.vendedor_id ? supabase.from('usuarios').select('id, nombre, color, telefono, markup_pct, es_externo').eq('id', cotizacion.vendedor_id).single() : Promise.resolve({ data: null }),
       ])
-      const blob = await generarPDF({ cotizacion: dataPDF.cotConDatos, items: dataPDF.items, config, monedaPDF: monedaPdf, tasa, tasaUsdt: tasaUsdt.precio, tasaBcv: tasaBcv.precio, returnBlob: true, conIVA: conIva })
+      if (itemsRes.error) throw itemsRes.error
+      const cotConDatos = {
+        ...cotizacion,
+        cliente: clienteData || cotizacion.cliente,
+        vendedor: vendedorRes.data || cotizacion.vendedor,
+      }
+      const blob = await generarPDF({ cotizacion: cotConDatos, items: itemsRes.data ?? [], config, monedaPDF: monedaPdf, tasa, tasaUsdt: tasaUsdt.precio, tasaBcv: tasaBcv.precio, returnBlob: true, conIVA: conIva })
       printOrDownloadPdf(blob, `${numDisplay.replace(/\s+/g, '_')}.pdf`)
     } catch (err) {
-      if (err.message?.includes('dynamically imported module') || err.message?.includes('Failed to fetch')) {
-        showToast('Estás offline. La impresión estará disponible cuando te conectes.', 'warning')
-      } else {
-        showToast('Error al imprimir: ' + (err.message || 'Error desconocido'), 'error')
-      }
+      showToast('Error al imprimir: ' + (err.message || 'Error desconocido'), 'error')
     } finally {
       setPrintLoading(false)
     }
   }
 
   async function handleWhatsApp() {
-    if (offline || String(cotizacion.id).startsWith('local_') || cotizacion.numero === 'OFFLINE' || !navigator.onLine) {
-      const totalConIva = conIva 
-        ? (cotizacion.total_usd + (cotizacion.subtotal_usd - cotizacion.descuento_usd) * 0.16)
-        : cotizacion.total_usd
-      const texto = generarMensaje({
-        nombreNegocio: config.nombre_negocio,
-        nombreCliente: cotizacion.cliente?.nombre,
-        numDisplay,
-        totalUsd: totalConIva,
-      })
-      window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, '_blank', 'noopener')
-      return
-    }
     setWaLoading(true)
     try {
       const [{ generarPDF }, itemsRes, clienteData, vendedorRes] = await Promise.all([
@@ -319,7 +271,7 @@ export default memo(function CotizacionCard({ cotizacion, onEditar, onAnular, on
           <label className="text-xs font-semibold text-slate-600 cursor-pointer flex items-center gap-2 select-none w-full">
             <input type="checkbox" checked={conIva} onChange={e => {
               setConIva(e.target.checked)
-              localStorage.setItem('construacero_con_iva', e.target.checked ? 'true' : 'false')
+              localStorage.setItem('listopos_con_iva', e.target.checked ? 'true' : 'false')
             }} className="rounded text-primary focus:ring-primary h-3.5 w-3.5 border-slate-300" />
             Incluir IVA (16%)
           </label>
@@ -440,19 +392,19 @@ export default memo(function CotizacionCard({ cotizacion, onEditar, onAnular, on
       </div>
 
       {/* ══════════ ADMIN DESPACHO ACTIONS ══════════ */}
-      {puedeGestionarDespacho && despacho && onCambiarEstadoDespacho && (
+      {esAdministracion && despacho && onCambiarEstadoDespacho && (
         <div className="mt-auto border-t border-slate-100 px-3 py-2 flex items-center gap-1.5 flex-wrap">
           <button onClick={() => setShowDetalle(true)}
             className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium text-primary hover:bg-primary-light transition-colors">
             <Eye size={13} /> Ver
           </button>
-          {despacho.estado === 'pendiente' && ['administracion', 'jefe', 'desarrollador'].includes(perfil?.rol) && (
+          {despacho.estado === 'pendiente' && (
             <button onClick={() => onCambiarEstadoDespacho(despacho.id, 'despachada', cotizacion.numero, cotizacion.cliente_nombre || cotizacion.cliente?.nombre, cotizacion.vendedor_id)}
               className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold text-white bg-blue-500 hover:bg-blue-600 active:bg-blue-700 transition-colors ml-auto">
               <Check size={13} /> Aprobar despacho
             </button>
           )}
-          {despacho.estado === 'despachada' && ['logistica', 'jefe', 'desarrollador'].includes(perfil?.rol) && (
+          {despacho.estado === 'despachada' && (perfil?.rol === 'logistica' || perfil?.rol === 'desarrollador') && (
             <button onClick={() => onCambiarEstadoDespacho(despacho.id, 'entregada', cotizacion.numero, cotizacion.cliente_nombre || cotizacion.cliente?.nombre, cotizacion.vendedor_id)}
               className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold text-white bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 transition-colors ml-auto">
               <PackageCheck size={13} /> Marcar entregada

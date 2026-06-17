@@ -28,6 +28,14 @@
   }
 
   /* Prevenir caret/cursor de texto en elementos no interactivos (Chrome Android) */
+  html, body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+    position: relative;
+    height: 100%;
+  }
+
   body {
     -webkit-user-select: none;
     user-select: none;

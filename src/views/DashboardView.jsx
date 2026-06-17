@@ -547,8 +547,8 @@ export default function DashboardView() {
         </div>
       )}
 
-      {/* ── ADMIN: Despachos por aprobar (posición prominente) ── */}
-      {esAdministracion && !loading && (
+      {/* ── ADMIN/JEFE: Despachos por aprobar (posición prominente) ── */}
+      {(esAdministracion || esJefe) && !loading && (
         <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="font-bold text-slate-700 text-sm uppercase tracking-wide flex items-center gap-2">
@@ -607,8 +607,8 @@ export default function DashboardView() {
         </div>
       )}
 
-      {/* ── ADMIN: Accesos rápidos ── */}
-      {esAdministracion && !loading && (
+      {/* ── ADMIN/JEFE: Accesos rápidos ── */}
+      {(esAdministracion || esJefe) && !loading && (
         <div className="bg-white border border-slate-200 rounded-2xl p-5 flex flex-col gap-3">
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
             <Zap size={12} />Accesos rápidos
@@ -636,8 +636,8 @@ export default function DashboardView() {
         </div>
       )}
 
-      {/* ── ADMIN: Comisiones de la semana ── */}
-      {esAdministracion && !loading && (
+      {/* ── ADMIN/JEFE: Comisiones de la semana ── */}
+      {(esAdministracion || esJefe) && !loading && (
         <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="font-bold text-slate-700 text-sm uppercase tracking-wide flex items-center gap-2">

@@ -2,7 +2,7 @@
 // Persists React Query cache to IndexedDB via idb-keyval
 import { get, set, del } from 'idb-keyval'
 
-const IDB_KEY = 'CONSTRUACERO_RQ_CACHE'
+const IDB_KEY = 'LISTOPOS_RQ_CACHE'
 
 export const indexedDbPersister = {
   persistClient: async (client) => { await set(IDB_KEY, client) },

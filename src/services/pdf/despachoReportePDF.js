@@ -1,5 +1,5 @@
 // src/services/pdf/despachoReportePDF.js
-// Genera PDF profesional de Reporte de Despachos y Cobranza — formato Construacero Carabobo
+// Genera PDF profesional de Reporte de Despachos y Cobranza — formato Listo POS
 import { jsPDF } from 'jspdf'
 import { cargarLogo } from './pdfLogo'
 import { LOGO_LISTA_PRECIOS } from './logoListaPreciosBase64'
@@ -22,10 +22,9 @@ const FP_COLORS = {
   'Efectivo $':       [16, 185, 129],
   'Efectivo Bs':      [34, 197, 94],
   'Zelle':            [59, 130, 246],
-  'Pago Móvil':       [139, 92, 246],
+  'Transf. / Pago Móvil': [20, 184, 166],
   'USDT':             [245, 158, 11],
   'Punto de Venta':   [6, 182, 212],
-  'Transferencia':    [20, 184, 166],
   'Cruce':            [236, 72, 153],
   'Cta por cobrar':   [239, 68, 68],
   'Sin especificar':  [148, 163, 184],

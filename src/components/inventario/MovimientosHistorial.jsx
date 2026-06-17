@@ -244,7 +244,9 @@ export default function MovimientosHistorial() {
 
                       {/* Motivo texto + meta */}
                       <div className="flex items-center gap-2 mt-1">
-                        <p className="text-xs text-slate-500 truncate flex-1">{lote.motivo}</p>
+                        <p className={`text-xs text-slate-500 flex-1 ${expanded ? 'break-words whitespace-normal' : 'truncate'}`}>
+                          {lote.motivo}
+                        </p>
                       </div>
 
                       <div className="flex items-center gap-3 mt-0.5">

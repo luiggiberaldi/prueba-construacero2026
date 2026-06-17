@@ -3,7 +3,7 @@
   "outputDirectory": "dist",
   "framework": null,
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://prueba-construacero2026.luiggiberaldi94.workers.dev/api/:path*" },
+    { "source": "/api/:path*", "destination": "https://listo-pos-api.luiggiberaldi94.workers.dev/api/:path*" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

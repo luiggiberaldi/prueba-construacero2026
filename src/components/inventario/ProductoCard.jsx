@@ -1,6 +1,6 @@
 // src/components/inventario/ProductoCard.jsx
 import { useState } from 'react'
-import { Hash, Tag, Layers, Pencil, EyeOff, AlertTriangle, Package, Trash2, ClipboardList, TrendingUp, Eye, Building2, Zap, Copy } from 'lucide-react'
+import { Hash, Tag, Layers, Pencil, EyeOff, AlertTriangle, Package, Trash2, ClipboardList, TrendingUp, Eye, Building2, Zap, Copy, MoreVertical } from 'lucide-react'
 import useAuthStore from '../../store/useAuthStore'
 import { usePrecioVendedor } from '../../hooks/usePrecioVendedor'
 import { useTasaCambio } from '../../hooks/useTasaCambio'
@@ -62,9 +62,10 @@ function StockBadge({ actual, minimo, comprometido = 0, productoId }) {
   )
 }
 
-export default function ProductoCard({ producto, onEditar, onClonar, onDesactivar, onBorrar, onKardex, onDetalle, tasa = 0, comprometido = 0 }) {
+export default function ProductoCard({ producto, onEditar, onClonar, onDesactivar, onBorrar, onKardex, onDetalle, tasa = 0, comprometido = 0, index }) {
   const { perfil } = useAuthStore()
   const [copiado, setCopiado] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const { tasaBcv, tasaUsdt, tasaEfectiva } = useTasaCambio()
 
   const handleCopiarCodigo = (e) => {
@@ -76,7 +77,8 @@ export default function ProductoCard({ producto, onEditar, onClonar, onDesactiva
   }
 
   const esAdministracion = perfil?.rol === 'administracion'
-  const esPrivilegiado = (perfil?.rol === 'supervisor' || perfil?.rol === 'jefe') || esAdministracion
+  const esPrivilegiado = (perfil?.rol === 'supervisor' || perfil?.rol === 'jefe' || perfil?.rol === 'desarrollador') || esAdministracion
+  const puedeGestionarInventario = esAdministracion || perfil?.rol === 'desarrollador' || perfil?.rol === 'jefe'
   // Costo solo visible para administracion, jefe y desarrollador
   const puedeVerCosto = ['administracion', 'jefe', 'desarrollador'].includes(perfil?.rol)
   const { fg, bg } = colorCategoria(producto.categoria || '')
@@ -99,7 +101,7 @@ export default function ProductoCard({ producto, onEditar, onClonar, onDesactiva
     : null
 
   return (
-    <div className={`rounded-2xl border hover:shadow-lg transition-all duration-200 flex flex-col overflow-hidden ${
+    <div className={`rounded-2xl border hover:shadow-lg transition-all duration-200 flex flex-col relative ${
       agotado
         ? 'bg-red-50/50 border-red-200 hover:border-red-300 hover:shadow-red-100'
         : stockBajo
@@ -108,7 +110,7 @@ export default function ProductoCard({ producto, onEditar, onClonar, onDesactiva
     }`}>
 
       {/* Imagen */}
-      <div className={`relative w-full h-16 sm:h-20 flex items-center justify-center overflow-hidden shrink-0 ${agotado ? 'opacity-50 grayscale' : ''}`}
+      <div className={`relative w-full h-16 sm:h-20 flex items-center justify-center overflow-hidden shrink-0 rounded-t-2xl ${agotado ? 'opacity-50 grayscale' : ''}`}
         style={{ background: producto.imagen_url ? '#f8fafc' : bg }}>
         {producto.imagen_url ? (
           <img src={producto.imagen_url} alt={producto.nombre}
@@ -207,23 +209,23 @@ export default function ProductoCard({ producto, onEditar, onClonar, onDesactiva
               return (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-2">
                   {/* Bs — precio en bolívares (tasa USDT/mercado) */}
-                  <div className="flex items-center justify-between sm:flex-col sm:justify-center rounded-lg bg-emerald-50/70 border border-emerald-100 px-2 py-1 sm:p-1.5 min-w-0">
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 uppercase tracking-wider">
-                      <Zap size={10} />
-                      Bs
+                  <div className="flex flex-col items-center justify-center rounded-lg bg-emerald-50/70 border border-emerald-100 p-1.5 min-w-0">
+                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-700 uppercase tracking-wider">
+                      <Zap size={9} className="shrink-0" />
+                      Ref.
                     </span>
-                    <span className="text-[12px] font-black text-emerald-900 sm:mt-0.5 truncate">
+                    <span className="text-[11px] font-black text-emerald-950 mt-0.5 w-full text-center">
                       {precioBs != null ? fmtBs(precioBs) : '—'}
                     </span>
                   </div>
 
                   {/* BCV — equivalente USD al factor BCV */}
-                  <div className="flex items-center justify-between sm:flex-col sm:justify-center rounded-lg bg-blue-50/70 border border-blue-100 px-2 py-1 sm:p-1.5 min-w-0">
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 uppercase tracking-wider">
-                      <Building2 size={10} />
+                  <div className="flex flex-col items-center justify-center rounded-lg bg-blue-50/70 border border-blue-100 p-1.5 min-w-0">
+                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-blue-700 uppercase tracking-wider">
+                      <Building2 size={9} className="shrink-0" />
                       BCV
                     </span>
-                    <span className="text-[12px] font-black text-blue-900 sm:mt-0.5 truncate">
+                    <span className="text-[11px] font-black text-blue-950 mt-0.5 w-full text-center">
                       {tasaBcv?.precio > 0 && tasaEfectiva > 0 ? fmtUsd(precioBcvUsd) : '—'}
                     </span>
                   </div>
@@ -282,37 +284,76 @@ export default function ProductoCard({ producto, onEditar, onClonar, onDesactiva
       </div>
 
       {/* Acciones */}
-      <div className="border-t border-slate-100 px-2 py-1.5 flex flex-wrap items-center gap-1">
+      <div className="border-t border-slate-100 px-2.5 py-2 flex items-center justify-between gap-1.5 bg-slate-50/50 relative rounded-b-2xl">
         <button onClick={() => onDetalle?.(producto)} title="Ver detalle"
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors border border-emerald-200 whitespace-nowrap shrink-0">
+          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors border border-emerald-200 whitespace-nowrap">
           <Eye size={14} /> Ver detalle
         </button>
         {esPrivilegiado && (
-          <>
-            <button onClick={() => onKardex(producto)} title="Kardex"
-              className="flex items-center justify-center p-1.5 rounded-lg text-violet-600 hover:bg-violet-50 transition-colors shrink-0">
-              <ClipboardList size={13} />
+          <div className="relative shrink-0">
+            <button
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); }}
+              title="Más opciones"
+              className={`flex items-center justify-center p-2 rounded-xl border transition-colors ${
+                menuOpen
+                  ? 'bg-slate-200 border-slate-300 text-slate-700'
+                  : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700'
+              }`}
+            >
+              <MoreVertical size={14} />
             </button>
-            {esAdministracion && (
-              <>
-                <button onClick={() => onEditar(producto)} title="Editar"
-                  className="flex items-center justify-center p-1.5 rounded-lg text-sky-600 hover:bg-sky-50 transition-colors shrink-0">
-                  <Pencil size={13} />
-                </button>
-                <button onClick={() => onClonar?.(producto)} title="Crear producto similar"
-                  className="flex items-center justify-center p-1.5 rounded-lg text-violet-600 hover:bg-violet-50 transition-colors shrink-0">
-                  <Copy size={13} />
-                </button>
-                <button onClick={() => onDesactivar(producto)} title="Desactivar"
-                  className="flex items-center justify-center p-1.5 rounded-lg text-amber-500 hover:bg-amber-50 transition-colors shrink-0">
-                  <EyeOff size={13} />
-                </button>
-                <button onClick={() => onBorrar(producto)} title="Borrar"
-                  className="flex items-center justify-center p-1.5 rounded-lg text-red-400 hover:bg-red-50 transition-colors shrink-0">
-                  <Trash2 size={13} />
-                </button>
-              </>
-            )}
+          </div>
+        )}
+
+        {esPrivilegiado && menuOpen && (
+          <>
+            {/* Overlay invisible para cerrar al hacer click fuera */}
+            <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
+            <div className={`absolute ${index !== undefined && index % 2 === 0 ? 'left-2 sm:left-1/2 sm:-translate-x-1/2 sm:right-auto' : 'right-2 sm:left-1/2 sm:-translate-x-1/2 sm:right-auto'} bottom-full mb-2 z-20 w-48 rounded-xl border border-slate-200 bg-white p-1 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-150 flex flex-col gap-0.5`}>
+              <button
+                onClick={(e) => { e.stopPropagation(); onKardex(producto); setMenuOpen(false); }}
+                className="w-full flex items-center gap-2 px-2.5 py-2 text-[11px] font-semibold text-slate-700 hover:bg-violet-50 hover:text-violet-700 rounded-lg transition-colors text-left"
+              >
+                <ClipboardList size={13} className="text-violet-600" />
+                Kardex (Movimientos)
+              </button>
+
+              {puedeGestionarInventario && (
+                <>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onEditar(producto); setMenuOpen(false); }}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 text-[11px] font-semibold text-slate-700 hover:bg-sky-50 hover:text-sky-700 rounded-lg transition-colors text-left"
+                  >
+                    <Pencil size={13} className="text-sky-600" />
+                    Editar datos
+                  </button>
+
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onClonar?.(producto); setMenuOpen(false); }}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 text-[11px] font-semibold text-slate-700 hover:bg-purple-50 hover:text-purple-700 rounded-lg transition-colors text-left"
+                  >
+                    <Copy size={13} className="text-purple-600" />
+                    Clonar producto
+                  </button>
+
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onDesactivar(producto); setMenuOpen(false); }}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 text-[11px] font-semibold text-slate-700 hover:bg-amber-50 hover:text-amber-700 rounded-lg transition-colors text-left"
+                  >
+                    {producto.activo ? <EyeOff size={13} className="text-amber-500" /> : <Eye size={13} className="text-emerald-500" />}
+                    {producto.activo ? 'Desactivar' : 'Activar'}
+                  </button>
+
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onBorrar(producto); setMenuOpen(false); }}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 text-[11px] font-semibold text-red-600 hover:bg-red-50 hover:text-red-700 rounded-lg transition-colors text-left border-t border-slate-100 mt-1 pt-1.5"
+                  >
+                    <Trash2 size={13} className="text-red-500" />
+                    Eliminar
+                  </button>
+                </>
+              )}
+            </div>
           </>
         )}
       </div>

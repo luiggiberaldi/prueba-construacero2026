@@ -26,6 +26,7 @@ import EmptyState from '../components/ui/EmptyState'
 import ConfirmModal from '../components/ui/ConfirmModal'
 import { Modal } from '../components/ui/Modal'
 import { fmtFecha, fmtPrecio } from '../services/pdf/pdfShared'
+import { removeAccents } from '../utils/format'
 import supabase from '../services/supabase/client'
 
 // ─── Helper compartido de badges de estado ──────────────────────────────────
@@ -344,7 +345,7 @@ function DetalleOrdenModal({ orden, isOpen, onClose }) {
 }
 
 // ─── Draft (retomar) helpers ──────────────────────────────────────────────────
-const OC_DRAFT_KEY = 'construacero_orden_compra_draft'
+const OC_DRAFT_KEY = 'listopos_orden_compra_draft'
 
 function getDraftKey(userId) {
   const state = useAuthStore.getState()
@@ -547,10 +548,10 @@ export default function OrdenCompraView() {
   const clientesFiltrados = useMemo(() => {
     const activos = clientes.filter(c => c.activo !== false || c.id === clienteId)
     if (!clienteBusqueda.trim()) return activos.slice(0, 8)
-    const term = clienteBusqueda.toLowerCase()
+    const term = removeAccents(clienteBusqueda.toLowerCase())
     return activos.filter(c =>
-      (c.nombre || '').toLowerCase().includes(term) ||
-      (c.rif_cedula || '').toLowerCase().includes(term) ||
+      removeAccents(c.nombre || '').toLowerCase().includes(term) ||
+      removeAccents(c.rif_cedula || '').toLowerCase().includes(term) ||
       (c.telefono || '').includes(term)
     ).slice(0, 8)
   }, [clientes, clienteBusqueda, clienteId])
@@ -587,11 +588,12 @@ export default function OrdenCompraView() {
 
   // Filtrado de órdenes en el listado
   const ordenesFiltradas = useMemo(() => {
+    const q = removeAccents(busqueda.toLowerCase())
     return ordenes.filter(o => {
       const matchBusqueda =
-        o.proveedor_nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-        o.proveedor_rif.toLowerCase().includes(busqueda.toLowerCase()) ||
-        `oc-${String(o.numero).padStart(5, '0')}`.includes(busqueda.toLowerCase())
+        removeAccents(o.proveedor_nombre || '').toLowerCase().includes(q) ||
+        removeAccents(o.proveedor_rif || '').toLowerCase().includes(q) ||
+        `oc-${String(o.numero).padStart(5, '0')}`.includes(q)
 
       const matchEstado = filtroEstado === 'todos' || o.estado === filtroEstado
       return matchBusqueda && matchEstado

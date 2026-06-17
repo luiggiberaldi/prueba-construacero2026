@@ -11,7 +11,7 @@ import {
   AlertTriangle, Send, CheckCircle, Ban,
   PanelLeftClose, PanelLeftOpen, BarChart3, BarChart2,
   Clock, AlertCircle, ScrollText, FlaskConical, UserX, Shield, ShoppingCart,
-  Globe, Compass, Smartphone, HelpCircle, Lock,
+  Globe, Compass, Smartphone, HelpCircle, Lock, Briefcase,
 } from 'lucide-react'
 import useAuthStore from '../../store/useAuthStore'
 import LoginAvatar from '../auth/LoginAvatar'
@@ -19,6 +19,7 @@ import BcvWidget from './BcvWidget'
 import BottomNav from './BottomNav'
 import Breadcrumbs from '../ui/Breadcrumbs'
 import QuickQuoteFAB from '../cotizaciones/QuickQuoteFAB'
+import BuzonFAB from '../ui/BuzonFAB'
 import { useRealtimeSync } from '../../hooks/useRealtimeSync'
 import { useAdminAlerts } from '../../hooks/useAdminAlerts'
 import { useRecordatoriosCotizaciones } from '../../hooks/useRecordatoriosCotizaciones'
@@ -26,7 +27,7 @@ import { usePushNotifications } from '../../hooks/usePushNotifications'
 import { showToast } from '../ui/Toast'
 import { NOTIF_TYPES, setNotificationUserId, startRealtimeNotifications, stopRealtimeNotifications } from '../../services/notificationService'
 import PendingQueueBadge from '../ui/PendingQueueBadge'
-import { useOffline } from '../ui/OfflineBanner'
+import { useTasaCambio } from '../../hooks/useTasaCambio'
 
 // ─── Formato de tiempo relativo para notificaciones ─────────────────────────
 function formatNotifTime(ts) {
@@ -78,9 +79,11 @@ const NAV_TODOS = [
   { path: '/cotizaciones',   label: 'Cotizaciones',   icono: FileText,       excludeRoles: ['logistica', 'administracion'] },
   { path: '/despachos',      label: 'Despachos',      icono: PackageCheck,   labelByRole: { logistica: 'Entregas' } },
   { path: '/clientes',       label: 'Clientes',       icono: Users,          excludeRoles: ['logistica'] },
+  { path: '/personal',       label: 'Personal',       icono: Briefcase,      onlyRoles: ['administracion', 'jefe', 'desarrollador'] },
   { path: '/inventario',     label: 'Inventario',     icono: Package,        excludeRoles: ['logistica'] },
   { path: '/transportistas', label: 'Transportistas', icono: Truck,          excludeRoles: ['logistica'] },
   { path: '/comisiones',     label: 'Comisiones',     icono: DollarSign,     excludeRoles: ['logistica', 'administracion'] },
+  { path: '/tutorial',       label: 'Tutorial',       icono: HelpCircle, onlyRoles: ['vendedor', 'vendedor_sin_comision'] },
 ]
 
 const NAV_SUPERVISOR = [
@@ -88,6 +91,7 @@ const NAV_SUPERVISOR = [
   { path: '/orden-compra',        label: 'Orden de Compra',   icono: ShoppingCart, onlyRoles: ['supervisor', 'jefe', 'desarrollador'] },
   { path: '/seguimiento-operativo', label: 'Seguimiento Operativo', icono: ClipboardList, onlyRoles: ['supervisor', 'administracion', 'jefe', 'desarrollador'] },
   { path: '/reportes',      label: 'Reportes',      icono: BarChart3,   excludeRoles: ['supervisor'] },
+  { path: '/proveedores',   label: 'Proveedores',   icono: Briefcase,   onlyRoles: ['administracion', 'jefe', 'desarrollador'] },
   { path: '/configuracion', label: 'Configuración', icono: Settings, excludeRoles: ['vendedor', 'vendedor_sin_comision', 'logistica'] },
   { path: '/logs',          label: 'System Logs',   icono: ScrollText, onlyRoles: ['desarrollador'] },
   { path: '/tester',        label: 'Tester',        icono: FlaskConical, onlyRoles: ['desarrollador'] },
@@ -149,6 +153,29 @@ export default function AppLayout() {
   const perfil = useAuthStore(useCallback(s => s.perfil, []))
   const switchOut = useAuthStore(s => s.switchOut)
   const navigate = useNavigate()
+  const { tasaBcv, tasaUsdt, tasaEuro } = useTasaCambio()
+  const [time, setTime] = useState(new Date())
+  useEffect(() => {
+    const timer = setInterval(() => setTime(new Date()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const formatFechaHora = useCallback((date) => {
+    const d = date.toLocaleDateString('es-VE', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+    })
+    const t = date.toLocaleTimeString('es-VE', {
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    })
+    const capitalized = d.charAt(0).toUpperCase() + d.slice(1)
+    return `${capitalized} · ${t.toLowerCase()}`
+  }, [])
+
   const [menuOpen, setMenuOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth >= 768 && window.innerWidth < 1400)
 
@@ -245,8 +272,8 @@ export default function AppLayout() {
         }
       }
     }
-    window.addEventListener('construacero-notification', handleNotif)
-    return () => window.removeEventListener('construacero-notification', handleNotif)
+    window.addEventListener('listopos-notification', handleNotif)
+    return () => window.removeEventListener('listopos-notification', handleNotif)
   }, [perfil?.rol, queryClient])
 
   const esDesarrollador = perfil?.rol === 'desarrollador'
@@ -273,28 +300,16 @@ export default function AppLayout() {
     navigate('/login', { replace: true })
   }
 
-  const bannerVisible = useOffline()
-
   function cerrarMenu() { setMenuOpen(false) }
   // En móvil el drawer siempre muestra labels completos
   const collapsed = sidebarCollapsed && !menuOpen
 
   return (
-    <div className="flex pt-12 md:pt-14 overflow-hidden"
-      style={{
-        background: '#f1f5f9',
-        height: bannerVisible ? 'calc(100vh - 46px)' : '100vh',
-        transition: 'height 350ms cubic-bezier(0.4, 0, 0.2, 1)'
-      }}>
+    <div className="flex h-screen h-[100dvh] pt-12 md:pt-14 overflow-hidden" style={{ background: '#f1f5f9' }}>
 
       {/* ── Barra superior (móvil + desktop) ────────────────────────────── */}
-      <div className="fixed left-0 right-0 z-40 px-3 md:px-4 h-12 md:h-14 flex items-center justify-between gap-2 md:gap-4"
-        style={{
-          top: bannerVisible ? '46px' : '0px',
-          background: 'linear-gradient(135deg, #0a1628 0%, #0d1f3c 100%)',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          transition: 'top 350ms cubic-bezier(0.4, 0, 0.2, 1)'
-        }}>
+      <div className="fixed top-0 left-0 right-0 z-40 px-3 md:px-4 h-12 md:h-14 flex items-center justify-between gap-2 md:gap-4"
+        style={{ background: 'linear-gradient(135deg, #0a1628 0%, #0d1f3c 100%)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
 
         {/* Hamburger — solo móvil */}
         <button
@@ -306,7 +321,7 @@ export default function AppLayout() {
         </button>
 
         {/* Logo — solo móvil */}
-        <img src="/logo.png" alt="Construacero Carabobo" className="md:hidden h-7 w-auto object-contain" style={{ filter: 'brightness(1.1)' }} />
+        <img src="/logo.png" alt="Listo POS" className="md:hidden h-7 w-auto object-contain" style={{ filter: 'brightness(1.1)' }} />
 
         {/* Título de página — solo desktop */}
         {currentPage && (
@@ -319,8 +334,44 @@ export default function AppLayout() {
           </div>
         )}
 
+        {/* Reloj y Fecha - Extremo Izquierdo en PC */}
+        <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-white/50 text-xs font-semibold ml-4 select-none">
+          <Clock size={12} className="text-white/45" />
+          <span className="text-[11px] font-bold text-white/75 tracking-wide">
+            {formatFechaHora(time)}
+          </span>
+        </div>
+
         {/* Spacer */}
         <div className="flex-1" />
+
+        {/* Tasas en Header - Solo en PC */}
+        <div className="hidden md:flex items-center gap-3 mr-2 select-none">
+          {tasaBcv?.precio > 0 && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+              <span className="text-[10px] font-black text-emerald-400 uppercase tracking-wider">BCV:</span>
+              <span className="font-extrabold text-emerald-300 text-xs">
+                Bs {tasaBcv.precio.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          )}
+          {tasaEuro?.precio > 0 && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-blue-500/10 border border-blue-500/20">
+              <span className="text-[10px] font-black text-blue-400 uppercase tracking-wider">EUR:</span>
+              <span className="font-extrabold text-blue-300 text-xs">
+                Bs {tasaEuro.precio.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          )}
+          {tasaUsdt?.precio > 0 && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+              <span className="text-[10px] font-black text-indigo-400 uppercase tracking-wider">USDT:</span>
+              <span className="font-extrabold text-indigo-300 text-xs">
+                Bs {tasaUsdt.precio.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          )}
+        </div>
 
         {/* Widget BCV — supervisor puede configurar, vendedor solo ve la tasa */}
         <BcvWidget soloLectura={!esPrivilegiado} />
@@ -486,14 +537,12 @@ export default function AppLayout() {
       <div className={`relative shrink-0 transition-all duration-300 ease-out ${sidebarCollapsed ? 'md:w-[72px]' : 'md:w-64'}`}>
       <aside
         className={`
-          app-sidebar
-          ${bannerVisible ? 'banner-visible' : ''}
           fixed left-0 z-[200] flex flex-col shrink-0
           transition-all duration-300 ease-out
           ${menuOpen ? 'translate-x-0' : '-translate-x-full'}
           ${sidebarCollapsed ? 'md:w-[72px]' : 'md:w-64'}
-          w-[85%] max-w-xs rounded-br-2xl rounded-tr-2xl
-          md:w-64 md:inset-y-0 md:rounded-none md:translate-x-0 md:static md:z-auto md:sticky
+          w-[85%] max-w-xs top-0 rounded-br-2xl rounded-tr-2xl
+          md:w-64 md:inset-y-0 md:rounded-none md:translate-x-0 md:static md:z-auto md:h-[calc(100vh-3.5rem)] md:sticky md:top-14
           overflow-hidden
         `}
         style={{
@@ -528,7 +577,7 @@ export default function AppLayout() {
         {/* Logo + botón colapsar — solo desktop */}
         <div className="relative z-10 px-4 py-2 hidden md:flex flex-col items-center shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
 
-          <img src="/logo.png" alt="Construacero Carabobo"
+          <img src="/logo.png" alt="Listo POS"
             className={`object-contain transition-all duration-300 select-none pointer-events-none ${
               collapsed ? 'h-[40px] w-[40px]' : 'h-[66px] md:h-[80px]'
             }`}
@@ -550,10 +599,13 @@ export default function AppLayout() {
         <nav className="relative z-10 flex-1 min-h-0 overflow-y-auto p-2 space-y-0.5">
           {NAV_TODOS
             .filter(item => {
-              if (perfil?.rol === 'desarrollador') return true;
-              if (item.onlyRoles?.length === 1 && item.onlyRoles[0] === 'desarrollador') return false;
-              if (perfil?.rol === 'jefe') return true;
-              return (!item.excludeRoles || !item.excludeRoles.includes(perfil?.rol)) && (!item.onlyRoles || item.onlyRoles.includes(perfil?.rol));
+              if (item.path === '/tutorial') {
+                return ['vendedor', 'vendedor_sin_comision'].includes(perfil?.rol)
+              }
+              if (perfil?.rol === 'desarrollador') return true
+              if (item.onlyRoles?.length === 1 && item.onlyRoles[0] === 'desarrollador') return false
+              if (perfil?.rol === 'jefe') return true
+              return (!item.excludeRoles || !item.excludeRoles.includes(perfil?.rol)) && (!item.onlyRoles || item.onlyRoles.includes(perfil?.rol))
             })
             .map(({ path, label, labelByRole, icono: Icono }) => (
             <NavItem key={path} path={path} label={labelByRole?.[perfil?.rol] || label} Icono={Icono} onClick={cerrarMenu} collapsed={collapsed} />
@@ -645,11 +697,23 @@ export default function AppLayout() {
       {/* ── FAB Cotización Rápida — solo móvil, no para administracion ── */}
       {!esAdministracion && <QuickQuoteFAB />}
 
+      {/* ── FAB Buzón de Sugerencias — Global ── */}
+      <BuzonFAB />
+
       {/* ── Glassmorphic Urgent Notification Overlay Modal ── */}
       {urgentNotif && (
         <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-300">
           <div className="relative overflow-hidden bg-slate-900/95 border border-slate-700/50 rounded-3xl p-6 max-w-md w-full shadow-[0_20px_50px_rgba(0,0,0,0.5)] animate-in zoom-in-95 duration-200">
             
+            {/* Botón de cerrar (X) */}
+            <button
+              onClick={() => setUrgentNotif(null)}
+              className="absolute top-4 right-4 z-10 p-1.5 rounded-xl bg-white/5 border border-white/10 text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+              aria-label="Cerrar"
+            >
+              <X size={16} />
+            </button>
+
             {/* Animated breathing pulse background glow */}
             {urgentNotif.type === 'despacho_en_ruta' ? (
               <>
@@ -704,6 +768,13 @@ export default function AppLayout() {
               
               <div className="flex flex-col sm:flex-row gap-3 w-full">
                 <button
+                  type="button"
+                  onClick={() => setUrgentNotif(null)}
+                  className="flex-1 px-5 py-3 rounded-xl text-sm font-bold text-white/70 bg-white/5 border border-white/10 hover:bg-white/10 transition-all select-none hover:scale-[1.02] active:scale-[0.98]"
+                >
+                  Cerrar
+                </button>
+                <button
                   onClick={() => {
                     setUrgentNotif(null)
                     // Navegar al módulo adecuado
@@ -743,28 +814,6 @@ export default function AppLayout() {
         onClose={() => setShowPushTrouble(false)}
         rawError={pushTroubleRawMsg}
       />
-
-      <style>{`
-        .app-sidebar {
-          top: 0;
-          height: 100vh;
-          transition: top 350ms cubic-bezier(0.4, 0, 0.2, 1), height 350ms cubic-bezier(0.4, 0, 0.2, 1), transform 300ms ease-out;
-        }
-        .app-sidebar.banner-visible {
-          top: 46px;
-          height: calc(100vh - 46px);
-        }
-        @media (min-width: 768px) {
-          .app-sidebar {
-            top: 3.5rem;
-            height: calc(100vh - 3.5rem);
-          }
-          .app-sidebar.banner-visible {
-            top: calc(3.5rem + 46px);
-            height: calc(100vh - 3.5rem - 46px);
-          }
-        }
-      `}</style>
 
     </div>
   )

@@ -18,7 +18,7 @@ export default {
       colors: {
 
         // ─────────────────────────────────────────────────────
-        // 🎨 CONSTRUACERO CARABOBO — PALETA PROFESIONAL
+        // 🎨 LISTO POS — PALETA PROFESIONAL
         // Navy Institucional + Dorado Bronce (refinada)
         // ─────────────────────────────────────────────────────
 

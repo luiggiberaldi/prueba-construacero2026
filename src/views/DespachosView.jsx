@@ -23,6 +23,7 @@ import PageHeader  from '../components/ui/PageHeader'
 import Pagination  from '../components/ui/Pagination'
 import { OnboardingSequence } from '../components/ui/OnboardingTooltip'
 import { showToast } from '../components/ui/Toast'
+import { removeAccents } from '../utils/format'
 
 function SkeletonDespachos() {
   return (
@@ -193,15 +194,15 @@ export default function DespachosView() {
     }
 
     if (busquedaGlobal) {
-      const q = busquedaGlobal.toLowerCase()
+      const q = removeAccents(busquedaGlobal.toLowerCase())
       const qClean = q.replace(/[\.\-\s]/g, '')
       lista = lista.filter(d => {
         const numCotStr = d.cotizacion?.numero ? `cot-${String(d.cotizacion.numero).padStart(5, '0')}` : ''
         const numDspStr = `dsp-${String(d.numero).padStart(5, '0')}`
-        const clienteNombre = (d.cliente?.nombre || '').toLowerCase()
-        const clienteRif = (d.cliente?.rif_cedula || '').toLowerCase()
+        const clienteNombre = removeAccents(d.cliente?.nombre || '').toLowerCase()
+        const clienteRif = removeAccents(d.cliente?.rif_cedula || '').toLowerCase()
         const clienteRifClean = clienteRif.replace(/[\.\-\s]/g, '')
-        const clienteCodigo = (d.cliente?.codigo_cliente || '').toLowerCase()
+        const clienteCodigo = removeAccents(d.cliente?.codigo_cliente || '').toLowerCase()
         const totalStr = String(d.cotizacion?.total_usd || 0)
         
         return numCotStr.includes(q) ||
@@ -270,15 +271,15 @@ export default function DespachosView() {
       }
     })
     if (busquedaGlobal) {
-      const q = busquedaGlobal.toLowerCase()
+      const q = removeAccents(busquedaGlobal.toLowerCase())
       const qClean = q.replace(/[\.\-\s]/g, '')
       lista = lista.filter(d => {
         const numCotStr = d.cotizacion?.numero ? `cot-${String(d.cotizacion.numero).padStart(5, '0')}` : ''
         const numDspStr = `dsp-${String(d.numero).padStart(5, '0')}`
-        const clienteNombre = (d.cliente?.nombre || '').toLowerCase()
-        const clienteRif = (d.cliente?.rif_cedula || '').toLowerCase()
+        const clienteNombre = removeAccents(d.cliente?.nombre || '').toLowerCase()
+        const clienteRif = removeAccents(d.cliente?.rif_cedula || '').toLowerCase()
         const clienteRifClean = clienteRif.replace(/[\.\-\s]/g, '')
-        const clienteCodigo = (d.cliente?.codigo_cliente || '').toLowerCase()
+        const clienteCodigo = removeAccents(d.cliente?.codigo_cliente || '').toLowerCase()
         const totalStr = String(d.cotizacion?.total_usd || 0)
         
         return numCotStr.includes(q) ||

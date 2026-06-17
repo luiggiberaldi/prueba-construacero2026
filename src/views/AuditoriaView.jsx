@@ -13,7 +13,7 @@ import {
 import { useAuditoria }  from '../hooks/useAuditoria'
 import { useUsuarios }   from '../hooks/useUsuarios'
 import supabase from '../services/supabase/client'
-import { fmtUsdSimple as fmtUsd, fmtFecha, fmtBs, usdToBs } from '../utils/format'
+import { fmtUsdSimple as fmtUsd, fmtFecha, fmtBs, usdToBs, removeAccents } from '../utils/format'
 import { useTasaCambio } from '../hooks/useTasaCambio'
 import CustomSelect from '../components/ui/CustomSelect'
 import Skeleton from '../components/ui/Skeleton'
@@ -533,11 +533,11 @@ export default function AuditoriaView() {
 
     // Filtro de búsqueda
     if (busqueda.trim()) {
-      const q = busqueda.toLowerCase()
+      const q = removeAccents(busqueda.toLowerCase())
       filtered = filtered.filter(r => {
-        const usuario = (r.usuario?.nombre ?? r.usuario_nombre ?? '').toLowerCase()
-        const accion = (ACCION_LABEL[r.accion] ?? r.accion ?? '').toLowerCase()
-        const desc = (r.descripcion ?? '').toLowerCase()
+        const usuario = removeAccents(r.usuario?.nombre ?? r.usuario_nombre ?? '').toLowerCase()
+        const accion = removeAccents(ACCION_LABEL[r.accion] ?? r.accion ?? '').toLowerCase()
+        const desc = removeAccents(r.descripcion ?? '').toLowerCase()
         return usuario.includes(q) || accion.includes(q) || desc.includes(q)
       })
     }

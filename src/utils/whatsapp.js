@@ -70,7 +70,7 @@ async function subirPdfTemporal(pdfBlob, pdfFilename) {
  * Genera el mensaje para WhatsApp (con link al PDF)
  */
 export function generarMensaje({ nombreNegocio, nombreCliente, numDisplay, totalUsd, nombreVendedor, items = [], tipo = 'cotización' }) {
-  const empresa = nombreNegocio || 'Construacero Carabobo'
+  const empresa = nombreNegocio || 'Listo POS'
   const saludo = nombreCliente ? `Estimado/a *${nombreCliente}*,` : 'Estimado/a cliente,'
 
   const firma = nombreVendedor

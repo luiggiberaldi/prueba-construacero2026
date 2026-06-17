@@ -127,7 +127,7 @@ function UserCard({ user, onClick, index }) {
   )
 }
 
-const USUARIOS_CACHE_KEY = 'construacero_usuarios_cache'
+const USUARIOS_CACHE_KEY = 'listopos_usuarios_cache'
 
 // ─── Botón de instalación PWA ─────────────────────────────────────────────────
 function PwaInstallButton() {
@@ -266,7 +266,7 @@ function GateStep({ onPass }) {
           <div className="relative flex items-center justify-center">
             <div className="absolute rounded-full opacity-25 blur-3xl"
               style={{ width: '200px', height: '200px', background: 'radial-gradient(circle, #B8860B 0%, transparent 70%)' }} />
-            <img src="/logo.png" alt="Construacero Carabobo"
+            <img src="/logo.png" alt="Listo POS"
               className="relative z-10 w-auto object-contain select-none pointer-events-none drop-shadow-2xl"
               style={{ height: '140px', filter: 'drop-shadow(0 0 40px rgba(184,134,11,0.35)) brightness(1.05)' }}
               draggable={false} />

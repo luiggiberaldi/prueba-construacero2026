@@ -1,5 +1,4 @@
-// src/services/pdf/ordenDespachoPDF.js
-// Genera PDF de Orden de Despacho — sin footer, cuentas, slogan ni condiciones
+// Genera PDF de Orden de Despacho — formato Listo POS
 import { jsPDF } from 'jspdf'
 import { LOGO_DESPACHO } from './logoDespachoBase64'
 import {
@@ -9,9 +8,10 @@ import {
   drawCheck, drawWatermark, drawAnuladaWatermark, drawAprobadoWatermark,
 } from './pdfShared'
 
-export async function generarOrdenDespachoPDF({ despacho, items = [], config = {}, formaPago = '', monedaPDF = '$', tasa = 0, tasaUsdt = 0, tasaBcv = 0, returnBlob = false }) {
+export async function generarOrdenDespachoPDF({ despacho, items = [], config = {}, formaPago = '', monedaPDF = '$', tasa = 0, tasaUsdt = 0, tasaBcv = 0, returnBlob = false, porcentaje = 100 }) {
   const doc = new jsPDF({ unit: 'mm', format: 'letter', orientation: 'portrait' })
 
+  const factor = Number(porcentaje || 100) / 100
   const factorBcv = (tasaUsdt > 0 && tasaBcv > 0) ? tasaUsdt / tasaBcv : 0
   let y = 0
 
@@ -20,15 +20,18 @@ export async function generarOrdenDespachoPDF({ despacho, items = [], config = {
 
   const drawHeader = (doc, num) => {
     const HDR_H = 20
-    try { doc.addImage(LOGO_DESPACHO, 'PNG', MARGIN - 2, 6, 22, 22) } catch (_) {}
+    try { doc.addImage(LOGO_DESPACHO, 'PNG', MARGIN - 2, 6, 22, 22) } catch (_) { /* ignore */ }
     const centerX = PAGE_W / 2
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(20)
     doc.setTextColor(...C_DARK)
-    doc.text('CONSTRUACERO CARABOBO C.A.', centerX, 16, { align: 'center' })
+    let n = config.nombre_negocio || 'Listo POS C.A.'
+    if (!n || n.trim().toUpperCase() === 'PRUEBA' || n.trim() === '') n = 'Listo POS C.A.'
+    doc.text(n.toUpperCase(), centerX, 16, { align: 'center' })
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(12)
-    doc.text('RIF.: J-50115913-0', centerX, 22, { align: 'center' })
+    let r = config.rif_negocio ? `RIF: ${config.rif_negocio}` : ''
+    doc.text(r, centerX, 22, { align: 'center' })
     doc.setLineWidth(0.8)
     doc.setDrawColor(...C_DARK)
     doc.line(MARGIN, HDR_H + 10, PAGE_W - MARGIN, HDR_H + 10)
@@ -50,6 +53,8 @@ export async function generarOrdenDespachoPDF({ despacho, items = [], config = {
   // ══════════════════════════════════════════════════════════════════════════
   const baseCliente = despacho.cliente_factura || despacho.cliente || {}
   const cliente = { ...baseCliente }
+  const esPersonal = cliente.tipo_cliente === 'personal'
+  const descPersonalPct = esPersonal ? (config.descuento_personal_pct ?? 10) : 0
   if (despacho.direccion_envio_estado || despacho.direccion_envio_ciudad || despacho.direccion_envio_direccion) {
     cliente.estado = despacho.direccion_envio_estado || ''
     cliente.ciudad = despacho.direccion_envio_ciudad || ''
@@ -145,7 +150,11 @@ export async function generarOrdenDespachoPDF({ despacho, items = [], config = {
   doc.rect(MARGIN + clienteLblW, f4Y, clienteValW, rowH, 'S')
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(10)
-  const clienteNombre = (cliente.nombre || '—').toUpperCase()
+  let clienteNombre = (cliente.nombre || '—').toUpperCase()
+  if (cliente.tipo_cliente === 'personal') {
+    const descPct = config.descuento_personal_pct ?? 10
+    clienteNombre += ` (PERSONAL - DESC. ${descPct}%)`
+  }
   const maxClienteW = clienteValW - 4
   let cNombre = clienteNombre
   if (doc.getTextWidth(cNombre) > maxClienteW) {
@@ -392,8 +401,25 @@ export async function generarOrdenDespachoPDF({ despacho, items = [], config = {
     }
     doc.text(uniText, COLS[3].x + COLS[3].w / 2, midY, { align: 'center' })
 
-    const precioText = fmtPrecio(item.precio_unit_usd, monedaPDF, tasa, factorBcv)
-    const totalText = fmtPrecio(item.total_linea_usd, monedaPDF, tasa, factorBcv)
+    let precioUnitarioAMostrar = Number(item.precio_unit_usd || 0)
+    let totalLineaAMostrar = Number(item.total_linea_usd || 0)
+
+    const isCorte = (item.nombre_snap || '').toUpperCase().includes('CORTE') || (item.codigo_snap || '').startsWith('CRT')
+    const esFleteCorte = isFlete || isCorte
+    const esServicio = isFlete || isCorte || item.tiene_descuento === false
+
+    if (!esFleteCorte) {
+      precioUnitarioAMostrar = precioUnitarioAMostrar * factor
+      totalLineaAMostrar = totalLineaAMostrar * factor
+    }
+
+    if (esPersonal && descPersonalPct > 0 && !item.es_prestamo && !esServicio) {
+      precioUnitarioAMostrar = Math.round((precioUnitarioAMostrar / (1 - descPersonalPct / 100)) * 100) / 100
+      totalLineaAMostrar = precioUnitarioAMostrar * Number(item.cantidad || 0)
+    }
+
+    const precioText = fmtPrecio(precioUnitarioAMostrar, monedaPDF, tasa, factorBcv)
+    const totalText = fmtPrecio(totalLineaAMostrar, monedaPDF, tasa, factorBcv)
 
     // Auto-reducir fuente si el texto no cabe
     const fitTextCol = (text, col, baseFontSize, bold) => {
@@ -443,18 +469,41 @@ export async function generarOrdenDespachoPDF({ despacho, items = [], config = {
   const flete = Number(despacho.flete_usd || 0)
   const corte = Number(despacho.corte_usd || 0)
   const montoExento = flete + corte
-  const descuentoTotal = Number(despacho.descuento_total_usd || 0)
+  const descuentoTotalOriginal = Number(despacho.descuento_total_usd || 0)
+  const descuentoTotal = descuentoTotalOriginal * factor
   
   // En orden de despacho ahora SIEMPRE se muestra el exento
-  const subtotal = total - montoExento
-  const totalFinal = total - descuentoTotal
+  const subtotalOriginalVal = total - montoExento
+  const subtotal = subtotalOriginalVal * factor
+
+  // Variables esPersonal y descPersonalPct definidas al inicio
+
+  let subtotalOriginal = subtotal
+  let descuentoPersonal = 0
+
+  if (esPersonal && descPersonalPct > 0) {
+    let sumOriginal = 0
+    items.forEach(it => {
+      if (!it.es_prestamo) {
+        const cant = Number(it.cantidad || 0)
+        const precio = Number(it.precio_unit_usd || 0) * factor
+        const precioOrig = Math.round((precio / (1 - descPersonalPct / 100)) * 100) / 100
+        sumOriginal += precioOrig * cant
+      }
+    })
+    subtotalOriginal = sumOriginal
+    descuentoPersonal = Math.max(0, subtotalOriginal - subtotal)
+  }
+
+  const totalFinal = subtotal - descuentoTotal + montoExento
   const hasExentoReal = montoExento > 0
   const hasFleteReal = flete > 0
   const hasDescuento = descuentoTotal > 0
+  const hasDescuentoPersonal = descuentoPersonal > 0
 
   // Posicionar recuadro unificado fijo sobre el chofer
   // Si hay exento, el desglose ocupa 14mm (Subtotal + Exento), si no, 7mm (solo Subtotal)
-  const desgloseH = (hasExentoReal ? 14 : 7) + (hasDescuento ? 7 : 0)
+  const desgloseH = (hasExentoReal ? 14 : 7) + (hasDescuento ? 7 : 0) + (hasDescuentoPersonal ? 7 : 0)
   const ty = choferY - 24 - desgloseH
 
   // Parsear formas de pago (JSON array o string legacy)
@@ -477,6 +526,9 @@ export async function generarOrdenDespachoPDF({ despacho, items = [], config = {
           } else {
             formasPagoArr.push({ metodo: 'Cobro a destino (COD)', monto: f.monto })
           }
+        } else if (f.metodo === 'Saldo a Favor') {
+          const origen = (f.forma_pago_origen || 'Crédito').toUpperCase()
+          formasPagoArr.push({ ...f, metodo: `SALDO A FAVOR (${origen})` })
         } else {
           const metodoNorm = f.metodo === 'Efectivo' ? 'Efectivo $' : f.metodo
           formasPagoArr.push({ ...f, metodo: metodoNorm })
@@ -490,30 +542,20 @@ export async function generarOrdenDespachoPDF({ despacho, items = [], config = {
     }
   }
 
-  // Con un solo método de pago siempre mostrar el total real (incluye flete/corte)
-  if (formasPagoArr.length === 1) {
+  // Scale payment methods to match the new total if there are multiple
+  if (formasPagoArr.length > 1) {
+    const originalTotalFinal = (subtotalOriginalVal - descuentoTotalOriginal) + montoExento
+    const scalingFactor = originalTotalFinal > 0 ? totalFinal / originalTotalFinal : 1
+    formasPagoArr.forEach(fp => {
+      if (fp.monto != null) {
+        fp.monto = fp.monto * scalingFactor
+      }
+    })
+  } else if (formasPagoArr.length === 1) {
     formasPagoArr[0].monto = totalFinal
   }
 
-  // Notas Adicionales — ancladas 2mm sobre el recuadro de forma de pago
-  if (despacho.notas?.trim()) {
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(9)
-    const notasLineas = doc.splitTextToSize(despacho.notas.trim(), CONTENT_W)
-    const notasH = 5 + notasLineas.length * 5
-    const notasStartY = ty - 2 - notasH
-
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(9.5)
-    doc.setTextColor(...C_DARK)
-    doc.text('NOTAS:', MARGIN, notasStartY + 4)
-
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(9)
-    notasLineas.forEach((lin, i) => {
-      doc.text(lin, MARGIN, notasStartY + 4 + 5 + i * 5)
-    })
-  }
+  // Notas Adicionales — Eliminado para que no se muestre en Orden de Despacho
 
   // Fila FORMA DE PAGO — solo los elegidos con checkbox y palomita
   const fpY = ty
@@ -569,8 +611,20 @@ export async function generarOrdenDespachoPDF({ despacho, items = [], config = {
   doc.setFontSize(9)
   doc.setTextColor(...C_DARK)
   doc.text('Subtotal', MARGIN + 4, desY + 5)
-  doc.text(fmtTotal(subtotal, monedaPDF, tasa, factorBcv), MARGIN + CONTENT_W - 4, desY + 5, { align: 'right' })
+  doc.text(fmtTotal(subtotalOriginal, monedaPDF, tasa, factorBcv), MARGIN + CONTENT_W - 4, desY + 5, { align: 'right' })
   desY += 7
+
+  if (hasDescuentoPersonal) {
+    doc.setDrawColor(120, 120, 120)
+    doc.setLineWidth(0.2)
+    doc.rect(MARGIN, desY, CONTENT_W, 7, 'S')
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9)
+    doc.setTextColor(180, 100, 0)
+    doc.text(`Descuento Personal (${descPersonalPct}%)`, MARGIN + 4, desY + 5)
+    doc.text('-' + fmtTotal(descuentoPersonal, monedaPDF, tasa, factorBcv), MARGIN + CONTENT_W - 4, desY + 5, { align: 'right' })
+    desY += 7
+  }
 
   if (hasExentoReal) {
     doc.rect(MARGIN, desY, CONTENT_W, 7, 'S')
@@ -630,7 +684,7 @@ export async function generarOrdenDespachoPDF({ despacho, items = [], config = {
     { label: 'VEHÍCULO',    val: (transportista?.vehiculo    || '').toUpperCase(), w: col4W },
     { label: 'PLACA CHUTO', val: (transportista?.placa_chuto || '').toUpperCase(), w: col4W },
     { label: 'PLACA BATEA', val: (transportista?.placa_batea || '').toUpperCase(), w: col4W },
-    { label: 'FLETE',       val: hasFleteReal ? 'EN TABLA' : '—',                 w: col4W },
+    { label: 'COLOR BATEA', val: (transportista?.color_batea || '').toUpperCase(), w: col4W },
   ]
   function drawRow(fields, ry) {
     let currentX = MARGIN

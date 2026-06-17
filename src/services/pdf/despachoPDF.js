@@ -1,5 +1,4 @@
-// src/services/pdf/despachoPDF.js
-// Genera PDF profesional de Nota de Entrega — formato Construacero Carabobo
+// Genera PDF profesional de Nota de Entrega — formato Listo POS
 import { jsPDF } from 'jspdf'
 import { LOGO_DESPACHO } from './logoDespachoBase64'
 import {
@@ -9,9 +8,10 @@ import {
   drawWatermark, drawAnuladaWatermark,
 } from './pdfShared'
 
-export async function generarDespachoPDF({ despacho, items = [], config = {}, formaPago = '', monedaPDF = '$', tasa = 0, tasaUsdt = 0, tasaBcv = 0, returnBlob = false }) {
+export async function generarDespachoPDF({ despacho, items = [], config = {}, formaPago = '', monedaPDF = '$', tasa = 0, tasaUsdt = 0, tasaBcv = 0, returnBlob = false, porcentaje = 100 }) {
   const doc = new jsPDF({ unit: 'mm', format: 'letter', orientation: 'portrait' })
 
+  const factor = Number(porcentaje || 100) / 100
   const factorBcv = (tasaUsdt > 0 && tasaBcv > 0) ? tasaUsdt / tasaBcv : 0
 
   const rif = config.rif_negocio || 'J-50115913-0'
@@ -28,15 +28,18 @@ export async function generarDespachoPDF({ despacho, items = [], config = {}, fo
       return 50 // Margen superior 5cm para hoja pre-impresa
     }
     const HDR_H = 20
-    try { doc.addImage(LOGO_DESPACHO, 'PNG', MARGIN - 2, 6, 22, 22) } catch (_) {}
+    try { doc.addImage(LOGO_DESPACHO, 'PNG', MARGIN - 2, 6, 22, 22) } catch (_) { /* ignore */ }
     const centerX = PAGE_W / 2
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(17)
     doc.setTextColor(...C_DARK)
-    doc.text('CONSTRUACERO CARABOBO, C.A.', centerX, 16, { align: 'center' })
+    let n = config.nombre_negocio || 'Listo POS C.A.'
+    if (!n || n.trim().toUpperCase() === 'PRUEBA' || n.trim() === '') n = 'Listo POS C.A.'
+    doc.text(n.toUpperCase(), centerX, 16, { align: 'center' })
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(10)
-    doc.text('RIF.: J-50115913-0', centerX, 22, { align: 'center' })
+    let r = config.rif_negocio ? `RIF: ${config.rif_negocio}` : ''
+    doc.text(r, centerX, 22, { align: 'center' })
     doc.setLineWidth(0.8)
     doc.setDrawColor(...C_DARK)
     doc.line(MARGIN, HDR_H + 10, PAGE_W - MARGIN, HDR_H + 10)
@@ -58,6 +61,8 @@ export async function generarDespachoPDF({ despacho, items = [], config = {}, fo
   // ══════════════════════════════════════════════════════════════════════════
   const baseCliente = despacho.cliente_factura || despacho.cliente || {}
   const cliente = { ...baseCliente }
+  const esPersonal = cliente.tipo_cliente === 'personal'
+  const descPersonalPct = esPersonal ? (config.descuento_personal_pct ?? 10) : 0
   if (despacho.direccion_envio_estado || despacho.direccion_envio_ciudad || despacho.direccion_envio_direccion) {
     cliente.estado = despacho.direccion_envio_estado || ''
     cliente.ciudad = despacho.direccion_envio_ciudad || ''
@@ -204,7 +209,11 @@ export async function generarDespachoPDF({ despacho, items = [], config = {}, fo
   doc.rect(MARGIN + clienteLblW, f4Y, clienteValW, rowH, 'S')
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(9.5)
-  const clienteNombre = (cliente.nombre || '—').toUpperCase()
+  let clienteNombre = (cliente.nombre || '—').toUpperCase()
+  if (cliente.tipo_cliente === 'personal') {
+    const descPct = config.descuento_personal_pct ?? 10
+    clienteNombre += ` (PERSONAL - DESC. ${descPct}%)`
+  }
   const maxClienteW = clienteValW - 4
   let cNombre = clienteNombre
   if (doc.getTextWidth(cNombre) > maxClienteW) {
@@ -364,7 +373,7 @@ export async function generarDespachoPDF({ despacho, items = [], config = {}, fo
     })
   }
 
-  const isLargeDoc = itemsToRender.length >= 23
+  const isLargeDoc = itemsToRender.length >= 23 || (itemsToRender.length >= 18 && despacho.notas?.trim())
 
   itemsToRender.forEach((item) => {
     // Calcular cuántas líneas necesita la descripción (optimizado lineH = 3.6)
@@ -456,9 +465,25 @@ export async function generarDespachoPDF({ despacho, items = [], config = {}, fo
     }
     doc.text(uniText, COLS[3].x + COLS[3].w / 2, midY, { align: 'center' })
 
-    const precioText = fmtPrecio(item.precio_unit_usd, monedaPDF, tasa, factorBcv)
-    const totalLinea = item.es_prestamo ? (Number(item.cantidad || 0) * Number(item.precio_unit_usd || 0)) : Number(item.total_linea_usd || 0)
-    const totalText = fmtPrecio(totalLinea, monedaPDF, tasa, factorBcv)
+    let precioUnitarioAMostrar = Number(item.precio_unit_usd || 0)
+    let totalLineaAMostrar = item.es_prestamo ? (Number(item.cantidad || 0) * Number(item.precio_unit_usd || 0)) : Number(item.total_linea_usd || 0)
+
+    const isCorte = (item.nombre_snap || '').toUpperCase().includes('CORTE') || (item.codigo_snap || '').startsWith('CRT')
+    const esFleteCorte = isFlete || isCorte
+    const esServicio = isFlete || isCorte || item.tiene_descuento === false
+
+    if (!esFleteCorte) {
+      precioUnitarioAMostrar = precioUnitarioAMostrar * factor
+      totalLineaAMostrar = totalLineaAMostrar * factor
+    }
+
+    if (esPersonal && descPersonalPct > 0 && !item.es_prestamo && !esServicio) {
+      precioUnitarioAMostrar = Math.round((precioUnitarioAMostrar / (1 - descPersonalPct / 100)) * 100) / 100
+      totalLineaAMostrar = precioUnitarioAMostrar * Number(item.cantidad || 0)
+    }
+
+    const precioText = fmtPrecio(precioUnitarioAMostrar, monedaPDF, tasa, factorBcv)
+    const totalText = fmtPrecio(totalLineaAMostrar, monedaPDF, tasa, factorBcv)
 
     // Auto-reducir fuente si el texto no cabe
     const fitTextCol = (text, col, baseFontSize, bold) => {
@@ -490,12 +515,14 @@ export async function generarDespachoPDF({ despacho, items = [], config = {}, fo
 
   const sloganY = esMembrete ? PAGE_H - 21 : PAGE_H - 33
 
-  const total = items.reduce((acc, it) => acc + (it.es_prestamo ? (Number(it.cantidad || 0) * Number(it.precio_unit_usd || 0)) : Number(it.total_linea_usd || 0)), 0)
+  const totalOriginal = items.reduce((acc, it) => acc + (it.es_prestamo ? (Number(it.cantidad || 0) * Number(it.precio_unit_usd || 0)) : Number(it.total_linea_usd || 0)), 0)
+  const total = totalOriginal * factor
   const flete = Number(despacho.flete_usd || 0)
   const corte = Number(despacho.corte_usd || 0)
   const montoExento = flete + corte
-  const descuentoTotal = Number(despacho.descuento_total_usd || 0)
-  const totalFinal = total - descuentoTotal
+  const descuentoTotalOriginal = Number(despacho.descuento_total_usd || 0)
+  const descuentoTotal = descuentoTotalOriginal * factor
+  const totalFinal = total - descuentoTotal + montoExento
   const hasExento = montoExento > 0
   const hasFlete = flete > 0
   const hasDescuento = descuentoTotal > 0
@@ -506,11 +533,37 @@ export async function generarDespachoPDF({ despacho, items = [], config = {}, fo
   // 4. BLOQUE COMBINADO: Crédito + Transporte (izq) | Desglose (der) + TOTAL
   // ══════════════════════════════════════════════════════════════════════════
   // Columna derecha: desglose (estructura fija de totales)
-  const rightItems = [
-    { label: 'SubTotal:', value: fmtTotal(total, monedaPDF, tasa, factorBcv) },
-    { label: 'Descuento:', value: fmtTotal(descuentoTotal, monedaPDF, tasa, factorBcv) },
-    { label: 'Exento:', value: fmtTotal(montoExento, monedaPDF, tasa, factorBcv) }
-  ]
+  let subtotalOriginal = total
+  let descuentoPersonal = 0
+
+  if (esPersonal && descPersonalPct > 0) {
+    let sumOriginal = 0
+    items.forEach(it => {
+      if (!it.es_prestamo) {
+        const cant = Number(it.cantidad || 0)
+        const precio = Number(it.precio_unit_usd || 0) * factor
+        const precioOrig = Math.round((precio / (1 - descPersonalPct / 100)) * 100) / 100
+        sumOriginal += precioOrig * cant
+      }
+    })
+    subtotalOriginal = sumOriginal
+    descuentoPersonal = Math.max(0, subtotalOriginal - total)
+  }
+
+  const rightItems = []
+  if (esPersonal && descPersonalPct > 0) {
+    rightItems.push({ label: 'SubTotal:', value: fmtTotal(subtotalOriginal, monedaPDF, tasa, factorBcv) })
+    rightItems.push({ label: `Desc. Personal (${descPersonalPct}%):`, value: '-' + fmtTotal(descuentoPersonal, monedaPDF, tasa, factorBcv), color: [180, 100, 0] })
+  } else {
+    rightItems.push({ label: 'SubTotal:', value: fmtTotal(total, monedaPDF, tasa, factorBcv) })
+  }
+
+  if (descuentoTotal > 0) {
+    rightItems.push({ label: 'Descuento:', value: '-' + fmtTotal(descuentoTotal, monedaPDF, tasa, factorBcv), color: [220, 38, 38] })
+  }
+  if (montoExento > 0) {
+    rightItems.push({ label: 'Exento:', value: fmtTotal(montoExento, monedaPDF, tasa, factorBcv), color: [50, 100, 180] })
+  }
 
   if (refPago) {
     rightItems.push({ label: 'Ref:', value: refPago })
@@ -527,7 +580,25 @@ export async function generarDespachoPDF({ despacho, items = [], config = {}, fo
   const dataRowH = 3.6
   const comboTop = comboBottom - totalBarH - numComboRows * dataRowH
 
+  // Notas Adicionales — se renderizan ancladas sobre el bloque de totales
+  if (despacho.notas?.trim()) {
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9)
+    const notasLineas = doc.splitTextToSize(despacho.notas.trim(), CONTENT_W)
+    const notasH = 5 + notasLineas.length * 5
+    const notasStartY = comboTop - 2 - notasH
 
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9.5)
+    doc.setTextColor(...C_DARK)
+    doc.text('NOTAS:', MARGIN, notasStartY + 4)
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9)
+    notasLineas.forEach((lin, i) => {
+      doc.text(lin, MARGIN, notasStartY + 4 + 5 + i * 5)
+    })
+  }
 
   // Dibujar filas de datos
   const comboLeftW = CONTENT_W - 90
@@ -568,10 +639,10 @@ export async function generarDespachoPDF({ despacho, items = [], config = {}, fo
   doc.setDrawColor(120, 120, 120)
   doc.setLineWidth(0.3)
   doc.rect(MARGIN, creditRowY, CONTENT_W, CREDIT_ROW_H, 'S')
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(8.5)
-  doc.setTextColor(...C_DARK)
-  doc.text('8 DÍAS DE CRÉDITO CONTINUO', MARGIN + 3, creditRowY + CREDIT_ROW_H / 2 + 1.0)
+  const creditText = cliente.tipo_cliente === 'personal'
+    ? `PERSONAL DE LA EMPRESA (DESC. ${config.descuento_personal_pct ?? 10}% APLICADO)`
+    : '8 DÍAS DE CRÉDITO CONTINUO'
+  doc.text(creditText, MARGIN + 3, creditRowY + CREDIT_ROW_H / 2 + 1.0)
 
   // Grid del chofer
   doc.setFillColor(240, 240, 240)
@@ -597,7 +668,7 @@ export async function generarDespachoPDF({ despacho, items = [], config = {}, fo
     { label: 'VEHÍCULO',    val: (transportista?.vehiculo    || '').toUpperCase(), w: col4W },
     { label: 'PLACA CHUTO', val: (transportista?.placa_chuto || '').toUpperCase(), w: col4W },
     { label: 'PLACA BATEA', val: (transportista?.placa_batea || '').toUpperCase(), w: col4W },
-    { label: 'FLETE',       val: hasFlete ? 'EN TABLA' : '—',                     w: col4W },
+    { label: 'COLOR BATEA', val: (transportista?.color_batea || '').toUpperCase(), w: col4W },
   ]
 
   function drawChoferRow(fields, ry) {
@@ -673,8 +744,8 @@ export async function generarDespachoPDF({ despacho, items = [], config = {}, fo
       doc.setFontSize(7)
       doc.setTextColor(...C_DARK)
 
-      const addr1 = 'Av. 76, (Calle S-3) Nro. 70-C-766, Local Galpón Nro. 3 Edificio Centro Industrial Massico II'
-      const addr2 = 'Parcela MB-6 y Mb7, Urb. Industrial Aeropuerto Vía Flor Amarillo, Valencia, Edo. Carabobo, Zona Postal 2003'
+      const addr1 = config.direccion_negocio || 'Dirección Comercial'
+      const addr2 = config.pie_pagina_pdf || (config.rif_negocio ? `RIF: ${config.rif_negocio}` : '')
 
       doc.text(addr1, PAGE_W / 2, footerY + 5, { align: 'center' })
       doc.setFont('helvetica', 'normal')

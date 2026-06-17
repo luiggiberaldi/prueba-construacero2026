@@ -6,16 +6,14 @@ import { useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import supabase from '../services/supabase/client'
 import { apiUrl, getAuthHeaders } from '../services/apiBase'
-import useAuthStore from '../store/useAuthStore'
+import { broadcastEntidad } from '../services/supabase/realtimeBus'
 
 const KEY = ['config_negocio']
 
 export function useConfigNegocio() {
   const qc = useQueryClient()
-  const offline = useAuthStore(s => s.offline)
 
   useEffect(() => {
-    if (offline) return
     const channelName = `config_negocio_changes_${Date.now()}_${Math.random()}`
     const sub = supabase.channel(channelName)
       .on(
@@ -33,31 +31,21 @@ export function useConfigNegocio() {
       .subscribe()
 
     return () => { supabase.removeChannel(sub) }
-  }, [qc, offline])
+  }, [qc])
 
   return useQuery({
     queryKey: KEY,
     queryFn: async () => {
-      if (offline) {
-        try {
-          const cached = localStorage.getItem('listo_config_negocio_cache')
-          if (cached) return JSON.parse(cached)
-        } catch {}
-        return {}
-      }
       const headers = await getAuthHeaders()
       const res = await fetch(apiUrl('/api/config'), { headers })
       if (!res.ok) {
         throw new Error('Error al obtener la configuración')
       }
       const data = await res.json()
-      try {
-        localStorage.setItem('listo_config_negocio_cache', JSON.stringify(data))
-      } catch {}
       return data ?? {}
     },
-    retry: offline ? 0 : 1,
-    staleTime: offline ? Infinity : 5 * 60 * 1000,
+    retry: 1,
+    staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000, // config rarely changes, keep in cache 30 min
   })
 }
@@ -80,7 +68,7 @@ export function useActualizarConfig() {
         throw new Error(data.error || text || `Error ${res.status}`)
       }
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: KEY }); broadcastEntidad('config') },
   })
 }
 

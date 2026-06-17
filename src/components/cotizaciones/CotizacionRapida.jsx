@@ -18,7 +18,7 @@ import useAuthStore from '../../store/useAuthStore'
 import { usePrecioVendedor } from '../../hooks/usePrecioVendedor'
 import { round2, mulR } from '../../utils/dinero'
 import { calcTotales } from '../../utils/calcTotales'
-import { fmtUsdSimple as fmtUsd, fmtBs } from '../../utils/format'
+import { fmtUsdSimple as fmtUsd, fmtBs, removeAccents } from '../../utils/format'
 import { guardarProductoReciente, getProductosRecientes } from './ProductosRecientes'
 import { showToast } from '../ui/Toast'
 
@@ -97,10 +97,11 @@ export default function CotizacionRapida({ onVolver, onGuardado }) {
   // Filtrar clientes (excluir inactivos, preservando el seleccionado)
   const clientesFiltrados = useMemo(() => {
     if (!clienteBusqueda.trim()) return []
+    const q = removeAccents(clienteBusqueda.toLowerCase())
     return clientes.filter(c =>
       (c.activo !== false || c.id === clienteId) && (
-        c.nombre.toLowerCase().includes(clienteBusqueda.toLowerCase()) ||
-        (c.rif_cedula ?? '').toLowerCase().includes(clienteBusqueda.toLowerCase()) ||
+        removeAccents(c.nombre.toLowerCase()).includes(q) ||
+        removeAccents((c.rif_cedula ?? '').toLowerCase()).includes(q) ||
         (c.telefono ?? '').includes(clienteBusqueda)
       )
     ).slice(0, 8)
@@ -164,28 +165,21 @@ export default function CotizacionRapida({ onVolver, onGuardado }) {
     setEnviando(true)
     try {
       const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('La operación tardó demasiado. Verifica tu conexión e intenta de nuevo.')), 30000))
-      const res = await Promise.race([
+      const id = await Promise.race([
         guardarBorrador.mutateAsync({
           cotizacionId: null,
           campos: { clienteId, descuentoGlobalPct, costoEnvioUsd: 0 },
           items,
-          sendAfterSave: true,
-          tasaBcv: tasa,
         }),
         timeout,
       ])
-
-      if (res?._queued) {
-        showToast('📋 Sin conexión — cotización encolada para enviarse al reconectar.', 'warning', 7000)
-        onGuardado?.()
-        return
-      }
-
       await Promise.race([
-        enviarCotizacion.mutateAsync({ cotizacionId: res.id, tasaBcv: tasa }),
+        enviarCotizacion.mutateAsync({ cotizacionId: id, tasaBcv: tasa }),
         timeout,
       ])
       showToast('Cotización enviada exitosamente', 'success')
+
+
       onGuardado?.()
     } catch (e) {
       setError(e.message ?? 'Error al enviar')

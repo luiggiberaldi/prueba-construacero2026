@@ -1,17 +1,17 @@
 // src/hooks/useTasaCambio.js
 // Hook de tasas de cambio — BCV + USDT (Binance P2P) + Manual
 // Sincronización en tiempo real via configuracion_negocio + Supabase Realtime
-// Construacero Carabobo
+// Listo POS
 import { useState, useEffect, useCallback, useRef } from 'react'
 import supabase from '../services/supabase/client'
 import { useConfigNegocio, useActualizarConfig } from './useConfigNegocio'
 import useAuthStore from '../store/useAuthStore'
 
-const STORAGEKEY = 'construacero_tasa_v1'
-const STORAGEKEYUSDT = 'construacero_tasa_usdt_v1'
-const STORAGEKEYEURO = 'construacero_tasa_euro_v1'
-const STORAGEKEYMODE_BASE = 'construacero_tasa_modo_v2'
-const STORAGEKEYMANUAL_BASE = 'construacero_tasa_manual'
+const STORAGEKEY = 'listopos_tasa_v1'
+const STORAGEKEYUSDT = 'listopos_tasa_usdt_v1'
+const STORAGEKEYEURO = 'listopos_tasa_euro_v1'
+const STORAGEKEYMODE_BASE = 'listopos_tasa_modo_v2'
+const STORAGEKEYMANUAL_BASE = 'listopos_tasa_manual'
 const UPDATE_INTERVAL = 5 * 60 * 1000 // 5 minutos
 const MIN_REFRESH_INTERVAL = 60 * 1000 // no refrescar más de 1x/min al volver al foco
 
@@ -221,9 +221,9 @@ export function useTasaCambio() {
       }
       return saved
     }
-    const legacy = localStorage.getItem('construacero_tasa_modo_auto')
+    const legacy = localStorage.getItem('listopos_tasa_modo_auto')
     if (legacy !== null) {
-      localStorage.removeItem('construacero_tasa_modo_auto')
+      localStorage.removeItem('listopos_tasa_modo_auto')
       return JSON.parse(legacy) ? 'usdt' : 'manual'
     }
     return 'usdt'
@@ -231,7 +231,7 @@ export function useTasaCambio() {
 
   // Tasa manual
   const [tasaManual, setTasaManual] = useState(() => {
-    const saved = localStorage.getItem('construacero_tasa_manual') // legacy check
+    const saved = localStorage.getItem('listopos_tasa_manual') // legacy check
     if (saved && parseFloat(saved) > 0) return saved
     const namespaced = localStorage.getItem(STORAGEKEYMANUAL)
     return namespaced && parseFloat(namespaced) > 0 ? namespaced : ''
@@ -351,7 +351,6 @@ export function useTasaCambio() {
 
   // Fetch wrapper que usa el singleton global
   const fetchTasa = useCallback(async (esAutoUpdate = false) => {
-    if (useAuthStore.getState().offline) return
     if (!esAutoUpdate) setCargando(true)
     setError('')
 
@@ -375,31 +374,23 @@ export function useTasaCambio() {
     const lastFetchRef = { ts: 0 }
 
     const hasCachedRate = tasaRef.current?.precio > 0
-    if (!useAuthStore.getState().offline) {
-      fetchTasa(hasCachedRate)
-    }
+    fetchTasa(hasCachedRate)
     lastFetchRef.ts = Date.now()
 
     const intervalId = setInterval(() => {
-      if (!useAuthStore.getState().offline) {
-        fetchTasa(true)
-      }
+      fetchTasa(true)
       lastFetchRef.ts = Date.now()
     }, UPDATE_INTERVAL)
 
     const onVisible = () => {
       if (document.visibilityState === 'visible' && Date.now() - lastFetchRef.ts > MIN_REFRESH_INTERVAL) {
-        if (!useAuthStore.getState().offline) {
-          fetchTasa(true)
-        }
+        fetchTasa(true)
         lastFetchRef.ts = Date.now()
       }
     }
     const onFocus = () => {
       if (Date.now() - lastFetchRef.ts > MIN_REFRESH_INTERVAL) {
-        if (!useAuthStore.getState().offline) {
-          fetchTasa(true)
-        }
+        fetchTasa(true)
         lastFetchRef.ts = Date.now()
       }
     }
@@ -420,9 +411,6 @@ export function useTasaCambio() {
 
   // Guardar modo + valor en BD (dispara realtime a todos los clientes)
   const guardarTasaEnBD = useCallback((modo, valorManual) => {
-    if (useAuthStore.getState().offline) {
-      return
-    }
     localChangeTsRef.current = Date.now()
     const tasa_bcv_manual = modo === 'manual' && parseFloat(valorManual) > 0
       ? parseFloat(valorManual)

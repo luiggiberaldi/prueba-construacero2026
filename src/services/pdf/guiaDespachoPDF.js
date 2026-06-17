@@ -1,5 +1,4 @@
-// src/services/pdf/guiaDespachoPDF.js
-// Genera PDF de Guía de Despacho — solo para logística, sin precios, con eslogan y datos de chofer
+// Genera PDF de Guía de Despacho — formato Listo POS
 import { jsPDF } from 'jspdf'
 import { LOGO_DESPACHO } from './logoDespachoBase64'
 import {
@@ -27,15 +26,18 @@ export async function generarGuiaDespachoPDF({ despacho, items = [], config = {}
       return 50 // Margen superior 5cm para hoja pre-impresa
     }
     const HDR_H = 20
-    try { doc.addImage(LOGO_DESPACHO, 'PNG', MARGIN - 2, 6, 22, 22) } catch (_) {}
+    try { doc.addImage(LOGO_DESPACHO, 'PNG', MARGIN - 2, 6, 22, 22) } catch (_) { /* ignore */ }
     const centerX = PAGE_W / 2
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(20)
     doc.setTextColor(...C_DARK)
-    doc.text('CONSTRUACERO CARABOBO C.A.', centerX, 16, { align: 'center' })
+    let n = config.nombre_negocio || 'Listo POS C.A.'
+    if (!n || n.trim().toUpperCase() === 'PRUEBA' || n.trim() === '') n = 'Listo POS C.A.'
+    doc.text(n.toUpperCase(), centerX, 16, { align: 'center' })
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(12)
-    doc.text('RIF.: J-50115913-0', centerX, 22, { align: 'center' })
+    let r = config.rif_negocio ? `RIF: ${config.rif_negocio}` : ''
+    doc.text(r, centerX, 22, { align: 'center' })
     doc.setLineWidth(0.8)
     doc.setDrawColor(...C_DARK)
     doc.line(MARGIN, HDR_H + 10, PAGE_W - MARGIN, HDR_H + 10)
@@ -403,7 +405,7 @@ export async function generarGuiaDespachoPDF({ despacho, items = [], config = {}
     { label: 'VEHÍCULO',    val: (transportista?.vehiculo    || '').toUpperCase(), w: col4W },
     { label: 'PLACA CHUTO', val: (transportista?.placa_chuto || '').toUpperCase(), w: col4W },
     { label: 'PLACA BATEA', val: (transportista?.placa_batea || '').toUpperCase(), w: col4W },
-    { label: '',            val: '',                                              w: col4W },
+    { label: 'COLOR BATEA', val: (transportista?.color_batea || '').toUpperCase(), w: col4W },
   ]
 
   function drawRow(fields, ry) {

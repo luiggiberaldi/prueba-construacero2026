@@ -13,6 +13,9 @@ import Skeleton      from '../components/ui/Skeleton'
 import EmptyState    from '../components/ui/EmptyState'
 import ConfirmModal  from '../components/ui/ConfirmModal'
 import { useTasaCambio } from '../hooks/useTasaCambio'
+import supabase from '../services/supabase/client'
+import { apiUrl, getAuthHeaders } from '../services/apiBase'
+
 
 // ─── Tarjeta de resumen ───────────────────────────────────────────────────────
 function ResumenCard({ icon: Icon, label, value, sub, gradient, border }) {
@@ -43,8 +46,8 @@ function VendedorCard({ vendedor, comisiones, esSupervisor, onMarcarPagada, onPa
 
   // Cálculos locales para la tarjeta
   const totalGeneral = useMemo(() => comisiones.reduce((s, c) => s + Number(c.totalcomision || 0), 0), [comisiones])
-  const pendientes = useMemo(() => comisiones.filter(c => ['pendiente', 'cta_cobrar'].includes(c.estado) && Math.max(0, Number(c.totalcomision || 0) - Number(c.montopagado || 0)) > 0), [comisiones])
-  const montoPendiente = useMemo(() => pendientes.reduce((s, c) => s + Math.max(0, Number(c.totalcomision || 0) - Number(c.montopagado || 0)), 0), [pendientes])
+  const pendientes = useMemo(() => comisiones.filter(c => ['pendiente', 'cta_cobrar'].includes(c.estado) && Math.max(0, Number(c.comision_liberada || 0) - Number(c.montopagado || 0)) > 0.01), [comisiones])
+  const montoPendiente = useMemo(() => pendientes.reduce((s, c) => s + Math.max(0, Number(c.comision_liberada || 0) - Number(c.montopagado || 0)), 0), [pendientes])
   
   // Limpiar seleccionados que ya no existen o ya no están pendientes
   useEffect(() => {
@@ -54,18 +57,18 @@ function VendedorCard({ vendedor, comisiones, esSupervisor, onMarcarPagada, onPa
   const montoSeleccionado = useMemo(() => {
     return pendientes
       .filter(p => seleccionados.includes(p.id))
-      .reduce((s, c) => s + Math.max(0, Number(c.totalcomision || 0) - Number(c.montopagado || 0)), 0);
+      .reduce((s, c) => s + Math.max(0, Number(c.comision_liberada || 0) - Number(c.montopagado || 0)), 0);
   }, [pendientes, seleccionados])
 
   const montoPendienteRegular = useMemo(() => 
     pendientes.filter(c => c.estado !== 'cta_cobrar')
-      .reduce((s, c) => s + Math.max(0, Number(c.totalcomision || 0) - Number(c.montopagado || 0)), 0), 
+      .reduce((s, c) => s + Math.max(0, Number(c.comision_liberada || 0) - Number(c.montopagado || 0)), 0), 
     [pendientes]
   )
   
   const montoPendienteCxc = useMemo(() => 
     pendientes.filter(c => c.estado === 'cta_cobrar')
-      .reduce((s, c) => s + Math.max(0, Number(c.totalcomision || 0) - Number(c.montopagado || 0)), 0), 
+      .reduce((s, c) => s + Math.max(0, Number(c.comision_liberada || 0) - Number(c.montopagado || 0)), 0), 
     [pendientes]
   )
   
@@ -222,7 +225,8 @@ function VendedorCard({ vendedor, comisiones, esSupervisor, onMarcarPagada, onPa
                   )}
                   <th className="px-2 py-2 font-semibold">Operación</th>
                   <th className="px-2 py-2 font-semibold">Cabilla / Otros</th>
-                  <th className="px-2 py-2 font-semibold text-right">Total Com.</th>
+                  <th className="px-2 py-2 font-semibold text-right">Comisión (Tot / Lib / Ret)</th>
+                  <th className="px-2 py-2 font-semibold text-right">Pagado / Pendiente</th>
                   <th className="px-2 py-2 font-semibold text-center">Estado</th>
                   {esSupervisor && montoPendiente > 0 && <th className="px-1 py-2"></th>}
                 </tr>
@@ -230,14 +234,14 @@ function VendedorCard({ vendedor, comisiones, esSupervisor, onMarcarPagada, onPa
               <tbody className="divide-y divide-slate-100/60">
                 {comisiones.map(c => {
                   const puedePagar = ['pendiente', 'cta_cobrar'].includes(c.estado)
-                  const saldoPagar = Math.max(0, Number(c.totalcomision || 0) - Number(c.montopagado || 0))
+                  const saldoPagar = Math.max(0, Number(c.comision_liberada || 0) - Number(c.montopagado || 0))
                   const badge = estadoBadge(c.estado)
                   
                   return (
                     <tr key={c.id} className="hover:bg-slate-50 transition-colors">
                       {esSupervisor && montoPendiente > 0 && (
                         <td className="w-8 px-1.5 py-2.5 text-center">
-                          {puedePagar && saldoPagar > 0 ? (
+                          {puedePagar && saldoPagar > 0.01 ? (
                             <input
                               type="checkbox"
                               checked={seleccionados.includes(c.id)}
@@ -271,17 +275,30 @@ function VendedorCard({ vendedor, comisiones, esSupervisor, onMarcarPagada, onPa
                         </div>
                       </td>
                       <td className="px-2 py-2.5 text-right">
-                        <span className="font-black text-slate-800 text-sm">{fmtUsd(c.totalcomision)}</span>
-                        {c.montopagado > 0 && c.estado !== 'pagada' && (
-                          <div className="text-[10px] text-emerald-600 font-bold mt-0.5">Ab: {fmtUsd(c.montopagado)}</div>
-                        )}
+                        <div className="flex flex-col">
+                          <span className="font-bold text-slate-750">{fmtUsd(c.totalcomision)}</span>
+                          <div className="flex justify-end gap-1.5 text-[9px] mt-0.5 font-medium">
+                            <span className="text-emerald-700 bg-emerald-50/80 px-1.5 py-0.2 rounded border border-emerald-100" title="Liberada">L: {fmtUsd(c.comision_liberada)}</span>
+                            {c.comision_retenida > 0.01 && (
+                              <span className="text-amber-700 bg-amber-50/80 px-1.5 py-0.2 rounded border border-amber-100" title="Retenida">R: {fmtUsd(c.comision_retenida)}</span>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-2 py-2.5 text-right">
+                        <div className="flex flex-col">
+                          <span className="text-slate-500 font-medium">{c.montopagado > 0 ? `Pagado: ${fmtUsd(c.montopagado)}` : '---'}</span>
+                          {saldoPagar > 0.01 && (
+                            <span className="text-amber-600 font-bold text-[10px] mt-0.5 bg-amber-50/60 px-1 py-0.2 rounded border border-amber-200/40 inline-block ml-auto">Pend: {fmtUsd(saldoPagar)}</span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-2 py-2.5 text-center">
                         <span className={`text-[10px] ${badge.cls}`}>{badge.label}</span>
                       </td>
                       {esSupervisor && montoPendiente > 0 && (
                         <td className="px-1 py-2.5 text-right">
-                          {puedePagar && saldoPagar > 0 ? (
+                          {puedePagar && saldoPagar > 0.01 ? (
                             <button
                               onClick={() => onMarcarPagada(c)}
                               disabled={marcando}
@@ -331,6 +348,138 @@ function SkeletonComisiones() {
   )
 }
 
+// ─── Tabla interactiva para reporte resumido ─────────────────────────────────
+function TablaLiquidacionInteractiva({ sellers, ajustes, onChange, tasaEuro }) {
+  const rate = Number(tasaEuro?.precio || 0)
+  
+  // Calcular Totales
+  const totalPeriodo = sellers.reduce((acc, s) => acc + s.generadoUsd, 0)
+  const totalCxC = sellers.reduce((acc, s) => acc + Number(ajustes[s.id]?.cxc || 0), 0)
+  const totalDesc = sellers.reduce((acc, s) => acc + Number(ajustes[s.id]?.descuentoCarro || 0), 0)
+  const totalGeneralUsd = totalPeriodo + totalCxC - totalDesc
+  const totalGeneralBs = totalGeneralUsd * rate
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden animate-in fade-in duration-200">
+      <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-1.5 h-4 bg-indigo-600 rounded-full" />
+          <h4 className="text-xs font-black text-slate-700 uppercase tracking-wider">Ajustes de Liquidación de Comisiones</h4>
+        </div>
+        <p className="text-[10px] text-slate-400 font-bold uppercase">Ingresa los valores manuales para el PDF</p>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse text-xs">
+          <thead>
+            <tr className="border-b border-slate-100 text-[10px] text-slate-400 uppercase font-black tracking-wider bg-slate-50/30">
+              <th className="px-4 py-3 font-black">Vendedor</th>
+              <th className="px-4 py-3 text-right font-black">Comisión Periodo ($)</th>
+              <th className="px-4 py-3 text-center font-black bg-amber-50/40 text-amber-700 w-44">Comisión CxC ($)</th>
+              <th className="px-4 py-3 text-center font-black bg-slate-50/80 w-44">Descuento Carro ($)</th>
+              <th className="px-4 py-3 text-right font-black">Total a Pagar ($)</th>
+              <th className="px-4 py-3 text-right font-black">Total en Bs</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {sellers.map((s) => {
+              const cxcVal = s.id in ajustes ? ajustes[s.id].cxc : ''
+              const descVal = s.id in ajustes ? ajustes[s.id].descuentoCarro : ''
+              
+              const totalRowUsd = s.generadoUsd + Number(ajustes[s.id]?.cxc || 0) - Number(ajustes[s.id]?.descuentoCarro || 0)
+              const totalRowBs = totalRowUsd * rate
+
+              return (
+                <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
+                  {/* Vendedor */}
+                  <td className="px-4 py-3 flex items-center gap-2.5">
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-white text-[10px] font-black"
+                      style={{ background: s.color || '#1B365D' }}>
+                      {s.nombre[0].toUpperCase()}
+                    </div>
+                    <span className="font-bold text-slate-800">
+                      {s.nombre} {s.esExterno && ' (E)'}
+                    </span>
+                  </td>
+
+                  {/* Comisión Periodo */}
+                  <td className="px-4 py-3 text-right font-bold text-slate-700">
+                    {fmtUsd(s.generadoUsd)}
+                  </td>
+
+                  {/* Comisión CxC (Input) */}
+                  <td className="px-4 py-3 bg-amber-55/10 text-center">
+                    <div className="inline-flex items-center rounded-lg border border-amber-200 bg-white px-2 py-0.5 focus-within:ring-2 focus-within:ring-amber-500/20 focus-within:border-amber-500 shadow-sm w-36">
+                      <span className="text-[10px] font-bold text-amber-600 mr-1">$</span>
+                      <input
+                        type="number"
+                        placeholder="0.00"
+                        step="0.01"
+                        min="0"
+                        value={cxcVal}
+                        onChange={(e) => onChange(s.id, 'cxc', e.target.value)}
+                        className="w-full bg-transparent border-0 p-0 text-xs font-black text-amber-700 focus:ring-0 outline-none text-right placeholder-amber-300"
+                      />
+                    </div>
+                  </td>
+
+                  {/* Descuento Carro (Input) */}
+                  <td className="px-4 py-3 bg-slate-50/20 text-center">
+                    <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-2 py-0.5 focus-within:ring-2 focus-within:ring-red-500/10 focus-within:border-red-400 shadow-sm w-36">
+                      <span className="text-[10px] font-bold text-slate-400 mr-1">$</span>
+                      <input
+                        type="number"
+                        placeholder="0.00"
+                        step="0.01"
+                        min="0"
+                        value={descVal}
+                        onChange={(e) => onChange(s.id, 'descuentoCarro', e.target.value)}
+                        className="w-full bg-transparent border-0 p-0 text-xs font-black text-slate-700 focus:ring-0 outline-none text-right placeholder-slate-300"
+                      />
+                    </div>
+                  </td>
+
+                  {/* Total a Pagar */}
+                  <td className="px-4 py-3 text-right font-black text-slate-800 text-sm">
+                    {fmtUsd(totalRowUsd)}
+                  </td>
+
+                  {/* Total Bs */}
+                  <td className="px-4 py-3 text-right font-black text-slate-500">
+                    {rate > 0 ? fmtBs(totalRowBs) : 'N/D'}
+                  </td>
+                </tr>
+              )
+            })}
+
+            {/* Totales */}
+            <tr className="bg-slate-50 font-bold border-t-2 border-slate-200 text-slate-850">
+              <td className="px-4 py-3 text-left font-black text-indigo-900">
+                TOTAL GENERAL
+              </td>
+              <td className="px-4 py-3 text-right font-black">
+                {fmtUsd(totalPeriodo)}
+              </td>
+              <td className="px-4 py-3 text-center bg-amber-50/20">
+                <span className="font-black text-amber-700">{fmtUsd(totalCxC)}</span>
+              </td>
+              <td className="px-4 py-3 text-center bg-slate-50/45">
+                <span className="font-black text-slate-600">{fmtUsd(totalDesc)}</span>
+              </td>
+              <td className="px-4 py-3 text-right font-black text-slate-900 text-sm">
+                {fmtUsd(totalGeneralUsd)}
+              </td>
+              <td className="px-4 py-3 text-right font-black text-slate-700">
+                {rate > 0 ? fmtBs(totalGeneralBs) : 'N/D'}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 // ─── Vista principal ──────────────────────────────────────────────────────────
 export default function ComisionesView() {
   const navigate = useNavigate()
@@ -351,6 +500,18 @@ export default function ComisionesView() {
   const [comisionAPagar, setComisionAPagar] = useState(null)
   const [pagoMasivoData, setPagoMasivoData] = useState(null)
   const [pagandoMasivo, setPagandoMasivo] = useState(false)
+
+  const [ajustesManuales, setAjustesManuales] = useState({})
+
+  const handleAjusteChange = useCallback((sellerId, field, val) => {
+    setAjustesManuales(prev => ({
+      ...prev,
+      [sellerId]: {
+        ...(prev[sellerId] || { cxc: '', descuentoCarro: '' }),
+        [field]: val
+      }
+    }))
+  }, [])
 
   // Reset de página al cambiar filtros
   useEffect(() => { setPage(1) }, [filtroEstado, filtroVendedor, fechaDesde, fechaHasta])
@@ -391,29 +552,137 @@ export default function ComisionesView() {
     return [...mapa.values()]
   }, [comisiones])
 
+  // Resumen de vendedores para la tabla interactiva
+  const sellersSummary = useMemo(() => {
+    return comisionesPorVendedor.map(g => {
+      const vendedor = g.vendedor || { nombre: 'Sin Asignar', color: '#64748b' }
+      const esExterno = !!vendedor?.es_externo || (vendedor?.markup_pct != null && Number(vendedor.markup_pct) > 0)
+      
+      const validItems = g.items.filter(c => c.estado !== 'cta_cobrar')
+      const generadoUsd = validItems.reduce((acc, c) => acc + Number(c.totalcomision || 0), 0)
+      
+      return {
+        id: g.id,
+        nombre: vendedor.nombre,
+        color: vendedor.color,
+        esExterno,
+        generadoUsd
+      }
+    }).sort((a, b) => a.nombre.localeCompare(b.nombre))
+  }, [comisionesPorVendedor])
+
   async function exportarPDF(vendedorFiltro = null, tipoVendedor = null) {
     setExportando(true)
     try {
       const activeVendedor = vendedorFiltro || (filtroVendedor ? vendedores.find(v => v.id === filtroVendedor) : null)
       
-      let items = comisiones
-      
+      const params = new URLSearchParams()
+      params.set('vista', 'eventos')
+      params.set('page', '1')
+      params.set('pageSize', '500')
+      if (fechaDesde) params.set('desde', fechaDesde)
+      if (fechaHasta) params.set('hasta', fechaHasta)
+
       if (activeVendedor) {
-        items = comisiones.filter(c => (c.vendedorid || '00000000-0000-0000-0000-000000000000') === activeVendedor.id)
-      } else if (tipoVendedor === 'internos') {
-        items = comisiones.filter(c => {
-          const v = c.vendedor
+        params.set('vendedorId', activeVendedor.id)
+      } else if (!puedeGestionarPagos && perfil?.id) {
+        params.set('vendedorId', perfil.id)
+      }
+
+      const headers = await getAuthHeaders()
+      const res = await fetch(apiUrl(`/api/comisiones/lista?${params}`), { headers })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`HTTP ${res.status}: ${text}`)
+      }
+      const resJson = await res.json()
+      const rawEvents = resJson.data || []
+
+      if (!rawEvents || rawEvents.length === 0) {
+        alert('🔍 SIN DATOS: No hay eventos de liberación de comisiones en el periodo seleccionado.')
+        setExportando(false)
+        return
+      }
+
+      let filteredEvents = rawEvents
+
+      if (tipoVendedor === 'internos') {
+        filteredEvents = rawEvents.filter(r => {
+          const v = r.vendedor || r.comisiones?.vendedor
           const esExt = !!v?.es_externo || (v?.markup_pct != null && Number(v.markup_pct) > 0)
           return !esExt
         })
       } else if (tipoVendedor === 'externos') {
-        items = comisiones.filter(c => {
-          const v = c.vendedor
+        filteredEvents = rawEvents.filter(r => {
+          const v = r.vendedor || r.comisiones?.vendedor
           const esExt = !!v?.es_externo || (v?.markup_pct != null && Number(v.markup_pct) > 0)
           return esExt
         })
       }
-        
+
+      if (filteredEvents.length === 0) {
+        alert('🔍 SIN DATOS: No hay eventos de liberación de comisiones en el grupo seleccionado.')
+        setExportando(false)
+        return
+      }
+
+      // Fetch cotizaciones
+      const cotizacionIds = [...new Set(filteredEvents.map(r => r.comisiones?.cotizacionid).filter(Boolean))]
+      let cotizacionesMap = {}
+      if (cotizacionIds.length > 0) {
+        const { data: cotList, error: cotErr } = await supabase
+          .from('cotizaciones')
+          .select('id, numero, tasa_bcv_snapshot, cliente:clientes(id, nombre)')
+          .in('id', cotizacionIds)
+        if (!cotErr && cotList) {
+          cotizacionesMap = Object.fromEntries(cotList.map(c => [c.id, c]))
+        }
+      }
+
+      const items = filteredEvents.map(r => {
+        const com = r.comisiones || {};
+        const desp = com.despacho || {};
+        const cot = cotizacionesMap[com.cotizacionid] || com.cotizacion;
+        return {
+          id: r.id,
+          monto: Number(r.monto || 0),
+          tipo: r.tipo,
+          creado_en: r.creado_en,
+          comisiones: {
+            id: com.id,
+            totalcomision: Number(com.totalcomision || 0),
+            comisioncabilla: Number(com.comisioncabilla || 0),
+            comisionotros: Number(com.comisionotros || 0),
+            pctcabilla: Number(com.pctcabilla || 0),
+            pctotros: Number(com.pctotros || 0),
+            estado: com.estado,
+            montopagado: Number(com.montopagado || 0),
+            cotizacionid: com.cotizacionid,
+            despacho: desp ? {
+              id: desp.id,
+              numero: desp.numero,
+              totalusd: desp.totalusd !== undefined ? desp.totalusd : desp.total_usd,
+              tasa_snapshot: desp.tasa_snapshot,
+              cliente: desp.cliente,
+              productos: desp.productos || []
+            } : null,
+            cotizacion: cot ? {
+              id: cot.id,
+              numero: cot.numero,
+              tasa_bcv_snapshot: cot.tasa_bcv_snapshot,
+              cliente_nombre: cot.cliente_nombre || cot.cliente?.nombre || null
+            } : null
+          },
+          vendedor: r.vendedor || com.vendedor || (activeVendedor ? {
+            id: activeVendedor.id,
+            nombre: activeVendedor.nombre,
+            color: activeVendedor.color,
+            markup_pct: activeVendedor.markup_pct,
+            es_externo: activeVendedor.es_externo
+          } : null)
+        };
+      });
+
       const rango = { from: fechaDesde, to: fechaHasta }
       
       const { generarComisionesPDF } = await import('../services/pdf/comisionesPDF')
@@ -424,7 +693,8 @@ export default function ComisionesView() {
         rango, 
         config: configNeg ?? {},
         formato: formatoReporte,
-        tasaEuro: tasaEuro?.precio || 0
+        tasaEuro: tasaEuro?.precio || 0,
+        ajustesManuales
       })
     } catch (e) { console.error('Error PDF:', e) }
     setExportando(false)
@@ -602,7 +872,14 @@ export default function ComisionesView() {
         <EmptyState icon={DollarSign} title="Sin resultados" description="No se encontraron comisiones con los filtros actuales." />
       ) : (
         <>
-          {(() => {
+          {formatoReporte === 'resumido' ? (
+            <TablaLiquidacionInteractiva
+              sellers={sellersSummary}
+              ajustes={ajustesManuales}
+              onChange={handleAjusteChange}
+              tasaEuro={tasaEuro}
+            />
+          ) : (() => {
             const comisionesInternos = comisionesPorVendedor.filter(g => !(!!g.vendedor?.es_externo || (g.vendedor?.markup_pct != null && Number(g.vendedor.markup_pct) > 0)))
             const comisionesExternos = comisionesPorVendedor.filter(g => !!g.vendedor?.es_externo || (g.vendedor?.markup_pct != null && Number(g.vendedor.markup_pct) > 0))
             return (
@@ -682,10 +959,10 @@ export default function ComisionesView() {
 
       <ConfirmModal
         isOpen={!!comisionAPagar}
-        onConfirm={() => { marcar.mutate({ comisionid: comisionAPagar.id, montopagado: Math.max(0, Number(comisionAPagar.totalcomision || 0) - Number(comisionAPagar.montopagado || 0)) }); setComisionAPagar(null) }}
+        onConfirm={() => { marcar.mutate({ comisionid: comisionAPagar.id, montopagado: Number(comisionAPagar.comision_liberada || 0) }); setComisionAPagar(null) }}
         onClose={() => setComisionAPagar(null)}
         title="Registrar Pago de Comisión"
-        message={comisionAPagar ? `Se registrará el pago de ${fmtUsd(Math.max(0, Number(comisionAPagar.totalcomision || 0) - Number(comisionAPagar.montopagado || 0)))}. Esta acción es atómica y final.` : ''}
+        message={comisionAPagar ? `Se registrará el pago de ${fmtUsd(Math.max(0, Number(comisionAPagar.comision_liberada || 0) - Number(comisionAPagar.montopagado || 0)))}. Esta acción es atómica y final.` : ''}
         confirmText="Confirmar Pago"
         variant="success"
       />
@@ -697,10 +974,10 @@ export default function ComisionesView() {
           setPagandoMasivo(true)
           const { pendientes: items } = pagoMasivoData
           for (const c of items) {
-            const saldo = Math.max(0, Number(c.totalcomision || 0) - Number(c.montopagado || 0))
-            if (saldo > 0) {
+            const saldo = Math.max(0, Number(c.comision_liberada || 0) - Number(c.montopagado || 0))
+            if (saldo > 0.01) {
               try {
-                await marcar.mutateAsync({ comisionid: c.id, montopagado: saldo })
+                await marcar.mutateAsync({ comisionid: c.id, montopagado: Number(c.comision_liberada || 0) })
               } catch (e) {
                 console.error('Error pagando comisión', c.id, e)
               }

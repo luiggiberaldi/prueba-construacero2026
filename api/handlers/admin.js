@@ -186,26 +186,7 @@ export async function handleAdmin(request, env, url) {
       }
     );
 
-    if (!dbRes.ok) {
-      let errMsg = 'Error al eliminar usuario';
-      let errStatus = 500;
-      try {
-        const errData = await dbRes.json();
-        if (errData && errData.code === '23503') {
-          errMsg = 'No se puede eliminar el usuario porque tiene registros asociados (clientes, cotizaciones, despachos o movimientos de inventario). En su lugar, desactívalo.';
-          errStatus = 409;
-        } else if (errData && errData.message) {
-          errMsg = errData.message;
-          errStatus = dbRes.status;
-        }
-      } catch (e) {
-        try {
-          const text = await dbRes.text();
-          if (text) errMsg = text;
-        } catch (_) {}
-      }
-      return jsonError(errMsg, errStatus, request);
-    }
+    if (!dbRes.ok) return jsonError('Error al eliminar usuario', 500, request);
 
     // Auditoría
     try {
@@ -1048,8 +1029,7 @@ async function supaBatch(env, table, rows, chunkSize = 500, logFn = null) {
 }
 
 async function supaDelete(env, table, userId, logFn = null) {
-  const colName = table === 'system_logs' ? 'usuario_id' : (table === 'comisiones' ? 'cuentaid' : 'cuenta_id');
-  const queryParam = `${colName}=eq.${userId}`;
+  const queryParam = table === 'system_logs' ? `usuario_id=eq.${userId}` : `cuenta_id=eq.${userId}`;
   await fetch(`${env.SUPABASE_URL}/rest/v1/${table}?${queryParam}`, {
     method: 'DELETE',
     headers: {
@@ -1096,7 +1076,7 @@ export async function handleCrearTransportista(request, env) {
   }
 
   const body = await request.json();
-  const { nombre, rif, telefono, zona_cobertura, tarifa_base, notas, color, vehiculo, placa_chuto, placa_batea, capacidad } = body;
+  const { nombre, rif, telefono, zona_cobertura, tarifa_base, notas, color, vehiculo, placa_chuto, placa_batea, capacidad, color_batea } = body;
   if (!nombre) return jsonError('Nombre es requerido', 400, request);
 
   const res = await fetch(`${env.SUPABASE_URL}/rest/v1/transportistas`, {
@@ -1109,7 +1089,7 @@ export async function handleCrearTransportista(request, env) {
     },
     body: JSON.stringify({
       nombre, rif, telefono, zona_cobertura, tarifa_base, notas,
-      color, vehiculo, placa_chuto, placa_batea, capacidad,
+      color, vehiculo, placa_chuto, placa_batea, capacidad, color_batea,
       cuenta_id: operador.cuenta_id,
       creado_por: operador.id,
       activo: true

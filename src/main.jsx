@@ -50,7 +50,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   </React.StrictMode>,
 )
 
-// Registrar Service Worker (solo para push notifications — el caché de datos está desactivado)
+// Registrar Service Worker (push notifications; el caché de datos de React Query
+// se persiste en IndexedDB vía PersistQueryClientProvider en App.jsx)
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', async () => {
     try {

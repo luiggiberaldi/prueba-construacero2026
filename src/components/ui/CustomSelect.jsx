@@ -75,6 +75,8 @@ export default function CustomSelect({
   const [openUp, setOpenUp] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const [portalPos, setPortalPos] = useState({ top: 0, left: 0, width: 0 })
+  const [showInlineCreate, setShowInlineCreate] = useState(false)
+  const [newValueText, setNewValueText] = useState('')
   const ref = useRef(null)
   const dropdownRef = useRef(null)
   const searchRef = useRef(null)
@@ -165,6 +167,8 @@ export default function CustomSelect({
   function elegir(val) {
     onChange(val)
     setBusqueda('')
+    setShowInlineCreate(false)
+    setNewValueText('')
     setAbierto(false)
   }
 
@@ -172,12 +176,18 @@ export default function CustomSelect({
     e.stopPropagation()
     onChange('')
     setBusqueda('')
+    setShowInlineCreate(false)
+    setNewValueText('')
   }
 
   function toggle() {
     if (disabled) return
     setAbierto(!abierto)
-    if (abierto) setBusqueda('')
+    if (abierto) {
+      setBusqueda('')
+      setShowInlineCreate(false)
+      setNewValueText('')
+    }
   }
 
   return (
@@ -292,6 +302,50 @@ export default function CustomSelect({
                           {createMaxLength && <span className="text-xs text-emerald-500/70 shrink-0">{busqueda.trim().length}/{createMaxLength}</span>}
                         </button>
                       )}
+                      {creatable && (
+                        showInlineCreate ? (
+                          <div className="p-3 border-t border-slate-100 bg-slate-50/50 flex gap-2 items-center mt-2 rounded-xl border border-indigo-100 animate-in fade-in zoom-in-95 duration-150">
+                            <input
+                              type="text"
+                              className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary bg-white text-slate-800"
+                              placeholder={createLabel ? `${createLabel}...` : "Escribir..."}
+                              value={newValueText}
+                              onChange={e => setNewValueText(e.target.value)}
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (newValueText.trim()) {
+                                  elegir(newValueText.trim());
+                                }
+                              }}
+                              className="px-4 py-2 text-sm font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 active:scale-95 transition-all shadow-sm"
+                            >
+                              Agregar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowInlineCreate(false);
+                                setNewValueText('');
+                              }}
+                              className="p-2 text-slate-500 hover:bg-slate-200 active:bg-slate-300 rounded-lg transition-colors"
+                            >
+                              <X size={18} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setShowInlineCreate(true)}
+                            className="w-full flex items-center gap-3 px-4 py-3.5 text-left rounded-xl transition-colors active:bg-indigo-50 text-indigo-700 mt-2 border border-indigo-100/50 bg-indigo-50/30 font-bold"
+                          >
+                            <Plus size={18} className="text-indigo-500 shrink-0" />
+                            <div className="flex-1 truncate text-base">{createLabel ? `+ ${createLabel}` : "+ Crear nuevo"}</div>
+                          </button>
+                        )
+                      )}
                     </div>
                   )}
                 </div>
@@ -374,6 +428,56 @@ export default function CustomSelect({
                       <span className="flex-1 truncate">{createLabel} "<span className="font-bold">{busqueda.trim()}</span>"</span>
                       {createMaxLength && <span className="text-xs text-emerald-500/70 shrink-0">{busqueda.trim().length}/{createMaxLength}</span>}
                     </button>
+                  )}
+                  {creatable && (
+                    showInlineCreate ? (
+                      <div className="p-2 border-t border-slate-100 bg-slate-50/50 flex gap-1.5 items-center shrink-0 animate-in fade-in zoom-in-95 duration-150">
+                        <input
+                          type="text"
+                          className="flex-1 px-2.5 py-1 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary bg-white text-slate-800"
+                          placeholder={createLabel ? `${createLabel}...` : "Escribir..."}
+                          value={newValueText}
+                          onChange={e => setNewValueText(e.target.value)}
+                          autoFocus
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              if (newValueText.trim()) elegir(newValueText.trim());
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (newValueText.trim()) {
+                              elegir(newValueText.trim());
+                            }
+                          }}
+                          className="px-2.5 py-1 text-xs font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-all active:scale-95 shrink-0 animate-pulse"
+                        >
+                          OK
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowInlineCreate(false);
+                            setNewValueText('');
+                          }}
+                          className="p-1 text-slate-500 hover:bg-slate-200 active:bg-slate-300 rounded-lg transition-colors shrink-0"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setShowInlineCreate(true)}
+                        className="w-full flex items-center gap-2 px-3.5 py-2 text-left text-xs font-bold text-indigo-600 hover:bg-indigo-50 border-t border-slate-100 shrink-0"
+                      >
+                        <Plus size={13} className="text-indigo-500 shrink-0" />
+                        <span className="flex-1 truncate">{createLabel ? `+ ${createLabel}` : "+ Crear nuevo"}</span>
+                      </button>
+                    )
                   )}
                 </>
               )}

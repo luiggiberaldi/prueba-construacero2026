@@ -2,7 +2,7 @@
 // Formulario para crear o editar un cliente
 // Usado dentro de un Modal — recibe onSuccess para cerrar tras guardar
 import { useState, useEffect } from 'react'
-import { User, Hash, Phone, Mail, MapPin, StickyNote, Loader2, Tag, Building } from 'lucide-react'
+import { User, Hash, Phone, Mail, MapPin, StickyNote, Loader2, Tag, Building, Briefcase } from 'lucide-react'
 import { useCrearCliente, useActualizarCliente } from '../../hooks/useClientes'
 import { authFetch } from '../../services/authFetch'
 import CustomSelect from '../ui/CustomSelect'
@@ -49,6 +49,7 @@ const VACIO = {
   direccion:    '',
   notas:        '',
   tipo_cliente: 'natural',
+  categoria:    '',
 }
 
 const PREFIJOS_RIF = ['V', 'J', 'E', 'G', 'P']
@@ -85,8 +86,22 @@ function formatearRif(prefijo, numero) {
 }
 
 // ─── Componente principal ─────────────────────────────────────────────────────
-export default function ClienteForm({ cliente = null, onSuccess, onCancel, compact = false }) {
+export default function ClienteForm({ cliente = null, onSuccess, onCancel, compact = false, forzarTipoCliente = null, forzarVendedorId = null, categoriasExistentes = [] }) {
   const esEdicion = !!cliente
+  const ROLES_SUGERIDOS = ['ADMINISTRADOR', 'DESPACHADOR', 'FACTURADOR', 'LOGÍSTICA', 'OPERARIO', 'VENDEDOR']
+  const [rolesCustom, setRolesCustom] = useState(() => {
+    try {
+      const saved = localStorage.getItem('roles_personal_custom')
+      return saved ? JSON.parse(saved).map(r => String(r).toUpperCase()) : []
+    } catch {
+      return []
+    }
+  })
+  const listaRoles = Array.from(new Set([
+    ...ROLES_SUGERIDOS,
+    ...categoriasExistentes.map(r => String(r).toUpperCase()),
+    ...rolesCustom
+  ])).sort()
 
   const [campos, setCampos] = useState(VACIO)
   const [rifPrefijo, setRifPrefijo] = useState('V')
@@ -98,7 +113,7 @@ export default function ClienteForm({ cliente = null, onSuccess, onCancel, compa
   const mutation = esEdicion ? actualizarCliente : crearCliente
   const cargando = mutation.isPending
 
-  // Cargar datos del cliente al editar
+  // Cargar datos del cliente al editar o forzar tipo de cliente
   useEffect(() => {
     if (cliente) {
       // Cargar teléfono tal cual (PhoneInput se encarga de parsear)
@@ -116,9 +131,12 @@ export default function ClienteForm({ cliente = null, onSuccess, onCancel, compa
         direccion:    cliente.direccion    ?? '',
         notas:        cliente.notas        ?? '',
         tipo_cliente: cliente.tipo_cliente ?? 'natural',
+        categoria:    cliente.categoria    ?? '',
       })
+    } else if (forzarTipoCliente) {
+      setCampos(prev => ({ ...prev, tipo_cliente: forzarTipoCliente }))
     }
-  }, [cliente])
+  }, [cliente, forzarTipoCliente])
 
   function cambiar(e) {
     const { name, value } = e.target
@@ -171,6 +189,9 @@ export default function ClienteForm({ cliente = null, onSuccess, onCancel, compa
     if (!campos.ciudad) {
       errs.ciudad = 'Selecciona una ciudad'
     }
+    if (campos.tipo_cliente === 'personal' && !campos.categoria.trim()) {
+      errs.categoria = 'El papel/rol en la empresa es obligatorio'
+    }
     // direccion: opcional
     return errs
   }
@@ -196,8 +217,13 @@ export default function ClienteForm({ cliente = null, onSuccess, onCancel, compa
 
     const camposFinales = {
       ...campos,
+      categoria: campos.tipo_cliente === 'personal' ? (campos.categoria || '').trim().toUpperCase() : '',
       rif_cedula: formatearRif(rifPrefijo, campos.rif_cedula.trim()),
       telefono: telefonoFinal,
+    }
+
+    if (forzarVendedorId) {
+      camposFinales.vendedor_id = forzarVendedorId
     }
 
     try {
@@ -262,17 +288,19 @@ export default function ClienteForm({ cliente = null, onSuccess, onCancel, compa
       </Campo>
 
       {/* Tipo de cliente */}
-      <Campo label="Tipo de cliente *" icono={Tag} error={errores.tipo_cliente}>
-        <CustomSelect
-          options={TIPOS_CLIENTE.map(t => ({ value: t.valor, label: t.label }))}
-          value={campos.tipo_cliente}
-          onChange={val => { setCampos(prev => ({ ...prev, tipo_cliente: val })); if (val === 'natural' && rifPrefijo === 'J') setRifPrefijo('V'); if (val === 'juridico' && rifPrefijo === 'V') setRifPrefijo('J'); if (errores.tipo_cliente) setErrores(prev => ({ ...prev, tipo_cliente: '' })); if (errorGeneral) setErrorGeneral('') }}
-          placeholder="Seleccionar tipo..."
-          icon={Tag}
-          disabled={cargando}
-          searchable={false}
-        />
-      </Campo>
+      {!forzarTipoCliente && (
+        <Campo label="Tipo de cliente *" icono={Tag} error={errores.tipo_cliente}>
+          <CustomSelect
+            options={TIPOS_CLIENTE.map(t => ({ value: t.valor, label: t.label }))}
+            value={campos.tipo_cliente}
+            onChange={val => { setCampos(prev => ({ ...prev, tipo_cliente: val })); if (val === 'natural' && rifPrefijo === 'J') setRifPrefijo('V'); if (val === 'juridico' && rifPrefijo === 'V') setRifPrefijo('J'); if (errores.tipo_cliente) setErrores(prev => ({ ...prev, tipo_cliente: '' })); if (errorGeneral) setErrorGeneral('') }}
+            placeholder="Seleccionar tipo..."
+            icon={Tag}
+            disabled={cargando}
+            searchable={false}
+          />
+        </Campo>
+      )}
 
       {/* RIF / Cédula */}
       <Campo label="RIF / Cédula *" icono={Hash} error={errores.rif_cedula}>
@@ -325,6 +353,39 @@ export default function ClienteForm({ cliente = null, onSuccess, onCancel, compa
           />
         </div>
       </Campo>
+
+      {/* Papel / Rol de personal (Sólo si es tipo_cliente === 'personal') */}
+      {campos.tipo_cliente === 'personal' && (
+        <Campo label="Papel / Rol en la empresa *" icono={Briefcase} error={errores.categoria}>
+          <CustomSelect
+            options={listaRoles.map(role => ({ value: role, label: role }))}
+            value={campos.categoria}
+            onChange={val => {
+              const upperVal = val ? String(val).toUpperCase() : ''
+              setCampos(prev => ({ ...prev, categoria: upperVal }))
+              if (upperVal && !listaRoles.includes(upperVal)) {
+                setRolesCustom(prev => {
+                  const next = Array.from(new Set([...prev, upperVal]))
+                  try {
+                    localStorage.setItem('roles_personal_custom', JSON.stringify(next))
+                  } catch (e) {
+                    console.error(e)
+                  }
+                  return next
+                })
+              }
+              if (errores.categoria) setErrores(prev => ({ ...prev, categoria: '' }))
+              if (errorGeneral) setErrorGeneral('')
+            }}
+            placeholder="Seleccionar o escribir cargo..."
+            icon={Briefcase}
+            disabled={cargando}
+            creatable={true}
+            createLabel="Crear cargo"
+            searchable={true}
+          />
+        </Campo>
+      )}
 
       {/* Teléfono */}
       <Campo label="Teléfono *" icono={Phone} error={errores.telefono}>

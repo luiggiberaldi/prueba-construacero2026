@@ -1,5 +1,4 @@
-// src/components/reportes/KpiCards.jsx
-import { DollarSign, Package, TrendingUp, Percent } from 'lucide-react'
+import { DollarSign, Package, TrendingUp, Percent, ArrowUpCircle } from 'lucide-react'
 import { fmtUsd } from '../../utils/format'
 
 function variacion(actual, anterior) {
@@ -49,9 +48,12 @@ export default function KpiCards({ kpis }) {
   const varDespachos = variacion(kpis.numDespachos, kpis.prevNumDespachos)
   const varTicket = variacion(kpis.ticketPromedio, kpis.prevTicketPromedio)
   const varComisiones = variacion(kpis.totalComisiones, kpis.prevTotalComisiones)
+  const varDevoluciones = kpis.totalDevoluciones !== undefined ? variacion(kpis.totalDevoluciones, kpis.prevTotalDevoluciones) : null
+
+  const hasDev = kpis.totalDevoluciones !== undefined
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+    <div className={`grid grid-cols-2 md:grid-cols-3 ${hasDev ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-3`}>
       <KpiCard
         icon={DollarSign} label="Ventas Netas (Sin Flete)"
         value={fmtUsd(kpis.totalVentas)}
@@ -97,6 +99,16 @@ export default function KpiCards({ kpis }) {
         gradient="linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)"
         border="rgba(255,255,255,0.10)"
       />
+      {hasDev && (
+        <KpiCard
+          icon={ArrowUpCircle} label="Devolución de Saldo a Favor"
+          value={fmtUsd(kpis.totalDevoluciones)}
+          sub={`Anterior: ${fmtUsd(kpis.prevTotalDevoluciones)}`}
+          badge={<Badge pct={varDevoluciones} />}
+          gradient="linear-gradient(135deg, #be123c 0%, #9f1239 100%)"
+          border="rgba(255,255,255,0.10)"
+        />
+      )}
     </div>
   )
 }

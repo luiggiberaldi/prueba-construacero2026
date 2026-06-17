@@ -41,7 +41,8 @@ export default function ProductoRow({ producto, onEditar, onClonar, onDesactivar
   }
 
   const esAdministracion = perfil?.rol === 'administracion'
-  const esPrivilegiado = (perfil?.rol === 'supervisor' || perfil?.rol === 'jefe') || esAdministracion
+  const esPrivilegiado = (perfil?.rol === 'supervisor' || perfil?.rol === 'jefe' || perfil?.rol === 'desarrollador') || esAdministracion
+  const puedeGestionarInventario = esAdministracion || perfil?.rol === 'desarrollador' || perfil?.rol === 'jefe'
   // Costo solo visible para administracion, jefe y desarrollador
   const puedeVerCosto = ['administracion', 'jefe', 'desarrollador'].includes(perfil?.rol)
   const { aplicarMarkup, esExterno, markupPct } = usePrecioVendedor()
@@ -172,7 +173,7 @@ export default function ProductoRow({ producto, onEditar, onClonar, onDesactivar
               className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 transition-colors">
               <ClipboardList size={15} />
             </button>
-            {esAdministracion && (
+            {puedeGestionarInventario && (
               <>
                 <button onClick={() => onEditar(producto)} title="Editar producto"
                   className="p-1.5 rounded-lg text-slate-400 hover:text-primary hover:bg-primary-light transition-colors">

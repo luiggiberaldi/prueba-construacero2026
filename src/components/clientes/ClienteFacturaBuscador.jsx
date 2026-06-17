@@ -9,6 +9,7 @@ import { buscarClientes } from '../../utils/clienteSearch'
 const TIPO_BADGE = {
   natural:  { cls: 'bg-slate-100 text-slate-600', label: 'N' },
   juridico: { cls: 'bg-violet-100 text-violet-700', label: 'J' },
+  personal: { cls: 'bg-indigo-100 text-indigo-700', label: 'P' },
 }
 
 export default function ClienteFacturaBuscador({ clientes = [], clienteId, onSelect }) {

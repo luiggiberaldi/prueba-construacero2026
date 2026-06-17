@@ -1,45 +1,37 @@
 // src/hooks/useStockComprometido.js
-// Hook para consultar stock comprometido en cotizaciones activas
+// Hook para consultar stock comprometido en cotizaciones activas (Desactivado temporalmente)
 import { useQuery } from '@tanstack/react-query'
-import supabase from '../services/supabase/client'
 import useAuthStore from '../store/useAuthStore'
 
 export const STOCK_COMPROMETIDO_KEY = ['stock_comprometido']
 
-// Totales por producto (para listados e indicadores rápidos)
+// Totales por producto (Desactivado - Retorna mapa vacío para ocultar en UI)
 export function useStockComprometido() {
   const { perfil } = useAuthStore()
 
   return useQuery({
     queryKey: STOCK_COMPROMETIDO_KEY,
     queryFn: async () => {
-      const { data, error } = await supabase.rpc('obtener_stock_comprometido')
-      if (error) throw error
-
-      const mapa = {}
-      for (const row of (data ?? [])) {
-        mapa[row.producto_id] = Number(row.total_comprometido)
-      }
-      return mapa
+      // Retorna mapa vacío para desactivar stock comprometido visualmente
+      return {}
     },
     enabled: !!perfil,
-    staleTime: 1000 * 60 * 3,   // 3 min — era 30s, reducir llamadas innecesarias
-    gcTime: 1000 * 60 * 10,
+    staleTime: Infinity, // No requiere refrescarse
   })
 }
 
-// Detalle por producto (quién tiene cuánto en qué cotización)
+// Detalle por producto (Desactivado - Retorna array vacío para ocultar en UI)
 export function useStockComprometidoDetalle(productoId) {
   const { perfil } = useAuthStore()
 
   return useQuery({
     queryKey: [...STOCK_COMPROMETIDO_KEY, 'detalle', productoId],
     queryFn: async () => {
-      const { data, error } = await supabase.rpc('obtener_stock_comprometido_detalle', { p_producto_id: productoId })
-      if (error) throw error
-      return data ?? []
+      // Usar productoId para evitar alertas de variable sin usar de ESLint
+      if (!productoId) return []
+      return []
     },
     enabled: !!perfil && !!productoId,
-    staleTime: 1000 * 15,
+    staleTime: Infinity,
   })
 }

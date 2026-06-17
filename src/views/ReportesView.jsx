@@ -8,29 +8,35 @@ import {
   ChevronDown, Globe, UserCheck, Printer, CheckCircle
 } from 'lucide-react'
 import { useReporteVentas } from '../hooks/useReporteVentas'
+import { useReporteExternos } from '../hooks/useReporteExternos'
 import { useConfigNegocio } from '../hooks/useConfigNegocio'
 import { useComisiones, useComisionesResumen, useMarcarComisionPagada } from '../hooks/useComisiones'
 import ConfirmModal from '../components/ui/ConfirmModal'
 import { useResumenCxC } from '../hooks/useCuentasCobrar'
+import { useProveedores } from '../hooks/useProveedores'
 import { getDayRange, getWeekRange, getMonthRange } from '../utils/dateHelpers'
-import { fmtUsd, fmtBs } from '../utils/format'
+import { fmtUsd, fmtBs, removeAccents } from '../utils/format'
 import useAuthStore from '../store/useAuthStore'
 import Skeleton from '../components/ui/Skeleton'
 import { useTasaCambio } from '../hooks/useTasaCambio'
 import EmptyState from '../components/ui/EmptyState'
 import { Modal } from '../components/ui/Modal'
 import DateRangeSelector from '../components/reportes/DateRangeSelector'
+import CustomSelect from '../components/ui/CustomSelect'
 import KpiCards from '../components/reportes/KpiCards'
 import TablaVendedores from '../components/reportes/TablaVendedores'
 import TablaProductos from '../components/reportes/TablaProductos'
 import TablaClientes from '../components/reportes/TablaClientes'
 import supabase from '../services/supabase/client'
+import { apiUrl, getAuthHeaders } from '../services/apiBase'
+
 
 // ─── Tabs Definition ──────────────────────────────────────────────────────
 const TABS = [
   { id: 'comisiones', label: 'Comisiones', short: 'Comis.', icon: Percent },
   { id: 'credito', label: 'Crédito', short: 'Créd.', icon: CreditCard },
   { id: 'ventas', label: 'Ventas', short: 'Ventas', icon: BarChart3 },
+  { id: 'externos', label: 'Artículos Externos', short: 'Extern.', icon: Globe },
 ]
 
 // ─── Skeleton ──────────────────────────────────────────────────────────────
@@ -103,15 +109,14 @@ function FormaPagoSection({ data = [], kpis }) {
   const fpDonacion = data.find(fp => fp.formaPago === 'Donación')
   const totalDonacion = fpDonacion ? fpDonacion.totalUsd : 0
   const totalDeducciones = totalCxc + totalDonacion
-  const ventasSinCxc = (kpis?.totalVentas || 0) - totalDeducciones
+  const ventasSinCxc = total - totalDeducciones
   const COLORS = {
     'Efectivo $': '#10b981',
     'Efectivo Bs': '#22c55e',
     'Zelle': '#3b82f6',
-    'Pago Móvil': '#8b5cf6',
+    'Transf. / Pago Móvil': '#14b8a6',
     'USDT': '#f59e0b',
     'Punto de Venta': '#06b6d4',
-    'Transferencia': '#14b8a6',
     'Cruce': '#ec4899',
     'Donación': '#a855f7',
     'Préstamo': '#eab308',
@@ -128,7 +133,7 @@ function FormaPagoSection({ data = [], kpis }) {
       </div>
       <div className="p-3 sm:p-4 space-y-2.5 sm:space-y-3">
         {data.map(fp => {
-          const pct = total > 0 ? (fp.totalUsd / total) * 100 : 0
+          const pct = total > 0 ? (Math.max(0, fp.totalUsd) / total) * 100 : 0
           const color = COLORS[fp.formaPago] || '#64748b'
           return (
             <div key={fp.formaPago} className="space-y-1">
@@ -138,9 +143,16 @@ function FormaPagoSection({ data = [], kpis }) {
                   <span className="font-semibold text-slate-700 truncate">{fp.formaPago}</span>
                   <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold shrink-0">{fp.count}</span>
                 </div>
-                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                  <span className="text-[10px] sm:text-xs text-slate-400">{pct.toFixed(0)}%</span>
-                  <span className="font-bold text-slate-800 text-xs sm:text-sm">{fmtUsd(fp.totalUsd)}</span>
+                <div className="flex flex-col items-end shrink-0">
+                  <div className="flex items-center gap-1.5 sm:gap-2">
+                    <span className="text-[10px] sm:text-xs text-slate-400">{pct.toFixed(0)}%</span>
+                    <span className="font-bold text-slate-800 text-xs sm:text-sm">{fmtUsd(fp.totalUsd)}</span>
+                  </div>
+                  {['Efectivo Bs', 'Transf. / Pago Móvil', 'Punto de Venta'].includes(fp.formaPago) && (
+                    <span className="text-[9.5px] sm:text-[10px] text-indigo-600 font-semibold mt-0.5">
+                      {fmtBs(fp.pagos?.reduce((s, p) => s + (Number(p.montoBs) || 0), 0) || 0)}
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="h-2 sm:h-2.5 rounded-full bg-slate-100 overflow-hidden">
@@ -150,8 +162,23 @@ function FormaPagoSection({ data = [], kpis }) {
                 <div className="pl-4 pt-1 space-y-0.5">
                   {fp.pagos.map((p, pIdx) => (
                     <div key={pIdx} className="flex justify-between text-[9px] sm:text-[10px] text-slate-500 font-medium bg-slate-50/50 hover:bg-slate-50 px-1.5 py-0.5 rounded border border-transparent hover:border-slate-100">
-                      <span className="truncate max-w-[200px] sm:max-w-[280px]">Doc #{p.numero || 'S/N'} · {p.cliente}</span>
-                      <span className="font-bold text-slate-700 shrink-0">{fmtUsd(p.monto)}</span>
+                      <span className="truncate max-w-[200px] sm:max-w-[280px]">
+                        {p.es_reembolso ? (
+                          <span className="text-rose-600 font-bold">
+                            [REEMBOLSO] {p.descripcion} · {p.cliente}
+                          </span>
+                        ) : (
+                          `Doc #${p.numero || 'S/N'}${p.referencia ? ` · Ref: ${p.referencia}` : ''} · ${p.cliente}`
+                        )}
+                      </span>
+                      <span className={`font-bold shrink-0 ${p.es_reembolso ? 'text-rose-600' : 'text-slate-700'}`}>
+                        {p.es_reembolso ? '-' : ''}{fmtUsd(Math.abs(p.monto))}
+                        {!p.es_reembolso && ['Efectivo Bs', 'Transf. / Pago Móvil', 'Punto de Venta'].includes(fp.formaPago) && p.montoBs && (
+                          <span className="text-[8.5px] text-indigo-600 font-semibold ml-1.5" title={`Tasa: ${p.tasa} Bs.`}>
+                            ({fmtBs(p.montoBs)})
+                          </span>
+                        )}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -161,14 +188,36 @@ function FormaPagoSection({ data = [], kpis }) {
         })}
 
         {/* Fila de Total */}
-        <div className="pt-2.5 border-t border-slate-200 mt-2 flex items-center justify-between text-xs sm:text-sm font-bold text-slate-800">
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            <span className="font-extrabold">TOTAL RECAUDADO</span>
-            <span className="text-[10px] sm:text-xs text-slate-500 font-bold">({data.reduce((s, fp) => s + (fp.count || 0), 0)} desp.)</span>
+        <div className="pt-2.5 border-t border-slate-200 mt-2 space-y-2">
+          <div className="flex items-center justify-between text-xs sm:text-sm font-bold text-slate-800">
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <span className="font-extrabold">TOTAL RECAUDADO</span>
+              <span className="text-[10px] sm:text-xs text-slate-500 font-bold">({data.reduce((s, fp) => s + (fp.count || 0), 0)} desp.)</span>
+            </div>
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <span className="text-[10px] sm:text-xs text-slate-500">100%</span>
+              <span className="font-black text-slate-900 text-xs sm:text-sm">{fmtUsd(total)}</span>
+            </div>
           </div>
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            <span className="text-[10px] sm:text-xs text-slate-500">100%</span>
-            <span className="font-black text-slate-900 text-xs sm:text-sm">{fmtUsd(total)}</span>
+
+          {/* Desglose por Monedas solicitado */}
+          <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/60 space-y-1.5">
+            <div className="flex justify-between items-center text-[10px] sm:text-xs text-slate-600 font-semibold">
+              <span>Total en Divisas (Efectivo $, Zelle, USDT)</span>
+              <span className="font-bold text-slate-800">
+                {fmtUsd(data.filter(fp => ['Efectivo $', 'Zelle', 'USDT'].includes(fp.formaPago)).reduce((s, fp) => s + fp.totalUsd, 0))}
+              </span>
+            </div>
+            <div className="flex justify-between items-center text-[10px] sm:text-xs text-indigo-600 font-semibold">
+              <span>Total en Bolívares (Efectivo Bs, Transf, P. Venta)</span>
+              <span className="font-bold text-indigo-700">
+                {fmtBs(
+                  data
+                    .filter(fp => ['Efectivo Bs', 'Transf. / Pago Móvil', 'Punto de Venta'].includes(fp.formaPago))
+                    .reduce((s, fp) => s + (fp.pagos?.reduce((sum, p) => sum + (Number(p.montoBs) || 0), 0) || 0), 0)
+                )}
+              </span>
+            </div>
           </div>
         </div>
 
@@ -186,6 +235,12 @@ function FormaPagoSection({ data = [], kpis }) {
               <div className="flex justify-between items-center">
                 <span>Fletes / Envío Cobrado</span>
                 <span className="font-bold text-emerald-600">+{fmtUsd(kpis.totalFlete)}</span>
+              </div>
+            )}
+            {kpis.totalDevoluciones > 0 && (
+              <div className="flex justify-between items-center">
+                <span>Devolución de Saldo a Favor</span>
+                <span className="font-bold text-rose-600">-{fmtUsd(kpis.totalDevoluciones)}</span>
               </div>
             )}
             <div className="border-t border-slate-200 pt-1 mt-1 flex justify-between items-center font-black text-slate-800 text-[11px] sm:text-xs">
@@ -388,6 +443,9 @@ function filtrarReporteVentas(reporte, tipoFiltro) {
   const formaPagoMap = {}
   filteredDespachos.forEach(d => {
     const formas = Array.isArray(d.forma_pago) ? d.forma_pago : []
+    const tasaDespacho = Number(d.tasa)
+    const tasaValida = tasaDespacho > 0 ? tasaDespacho : null
+
     if (formas.length === 0) {
       const fallback = 'Pendiente'
       if (!formaPagoMap[fallback]) formaPagoMap[fallback] = { formaPago: fallback, count: 0, totalUsd: 0, pagos: [] }
@@ -397,6 +455,9 @@ function filtrarReporteVentas(reporte, tipoFiltro) {
         cliente: d.cliente_nombre || 'Sin cliente',
         numero: d.despacho_numero || d.despacho_id?.slice(0, 8),
         monto: Number(d.venta_neta_usd || 0),
+        tasa: tasaValida,
+        montoBs: tasaValida ? Number(d.venta_neta_usd || 0) * tasaValida : null,
+        referencia: null,
         es_prestamo_puro: d.es_prestamo_puro,
         es_prestamo_mixto: d.es_prestamo_mixto
       })
@@ -411,6 +472,9 @@ function filtrarReporteVentas(reporte, tipoFiltro) {
           cliente: d.cliente_nombre || 'Sin cliente',
           numero: d.despacho_numero || d.despacho_id?.slice(0, 8),
           monto: monto,
+          tasa: tasaValida,
+          montoBs: tasaValida ? monto * tasaValida : null,
+          referencia: f.referencia || null,
           es_prestamo_puro: d.es_prestamo_puro,
           es_prestamo_mixto: d.es_prestamo_mixto
         })
@@ -502,22 +566,22 @@ function TabVentas({ configNeg }) {
   if (isError) return <ErrorMsg onRetry={refetch} />
   if (!reporte) return null
 
-  const { kpis, porVendedor, porCliente, porProducto, porCategoria, porFormaPago, despachos } = reporte
+  const { kpis, porVendedor, porCliente, porProducto, porCategoria, porFormaPago, despachos, devoluciones = [] } = reporte
   const rangoLabel = `${new Date(`${rango.from}T00:00:00`).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })} - ${new Date(`${rango.to}T00:00:00`).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })}`
 
   const METODO_PAGOS_STYLES = {
     'Efectivo $': 'bg-emerald-50 text-emerald-700 border-emerald-100',
     'Efectivo Bs': 'bg-green-50 text-green-700 border-green-100',
     'Zelle': 'bg-blue-50 text-blue-700 border-blue-100',
-    'Pago Móvil': 'bg-purple-50 text-purple-700 border-purple-100',
+    'Transf. / Pago Móvil': 'bg-teal-50 text-teal-700 border-teal-100',
     'USDT': 'bg-amber-50 text-amber-700 border-amber-100',
     'Punto de Venta': 'bg-cyan-50 text-cyan-700 border-cyan-100',
-    'Transferencia': 'bg-teal-50 text-teal-700 border-teal-100',
     'Cruce': 'bg-pink-50 text-pink-700 border-pink-100',
     'Donación': 'bg-purple-50 text-purple-700 border-purple-100',
     'Préstamo': 'bg-amber-50 text-amber-700 border-amber-100',
     'Prestamo': 'bg-amber-50 text-amber-700 border-amber-100',
     'Cta por cobrar': 'bg-red-50 text-red-700 border-red-100',
+    'Saldo a Favor': 'bg-emerald-50 text-emerald-700 border-emerald-100',
     'Sin especificar': 'bg-slate-50 text-slate-600 border-slate-100',
   }
 
@@ -716,6 +780,11 @@ function TabVentas({ configNeg }) {
                       </td>
                       <td className="px-3 py-2.5 font-bold text-slate-800 truncate max-w-[150px]">
                         {d.cliente_nombre || 'Sin cliente'}
+                        {d.cliente_tipo_cliente === 'personal' && (
+                          <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200 rounded">
+                            Personal
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 py-2.5">
                         <span className="inline-flex items-center gap-1.5">
@@ -729,11 +798,20 @@ function TabVentas({ configNeg }) {
                       <td className="px-3 py-2.5">
                         {Array.isArray(d.forma_pago) && d.forma_pago.length > 0 ? (
                           <div className="flex flex-wrap gap-1">
-                            {d.forma_pago.map((fp, idx) => (
-                              <span key={idx} className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-black tracking-wide border ${METODO_PAGOS_STYLES[fp.metodo] || METODO_PAGOS_STYLES['Sin especificar']}`}>
-                                {fp.metodo}: ${Number(fp.monto).toLocaleString('es-VE', { maximumFractionDigits: 2 })}
-                              </span>
-                            ))}
+                            {d.forma_pago.map((fp, idx) => {
+                              const tasa = Number(d.tasa)
+                              const montoBs = tasa > 0 ? Number(fp.monto) * tasa : null
+                              return (
+                                <span key={idx} className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-black tracking-wide border ${METODO_PAGOS_STYLES[fp.metodo] || METODO_PAGOS_STYLES['Sin especificar']}`}>
+                                  {fp.metodo}: ${Number(fp.monto).toLocaleString('es-VE', { maximumFractionDigits: 2 })}{fp.referencia ? ` (Ref: ${fp.referencia})` : ''}
+                                  {['Transf. / Pago Móvil', 'Punto de Venta'].includes(fp.metodo) && montoBs !== null && (
+                                    <span className="opacity-80 font-bold ml-1">
+                                      (Bs {montoBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                                    </span>
+                                  )}
+                                </span>
+                              )
+                            })}
                           </div>
                         ) : (
                           <span className="text-[10px] font-semibold text-slate-400">Pendiente</span>
@@ -777,6 +855,66 @@ function TabVentas({ configNeg }) {
               </div>
             </div>
           </div>
+
+          {/* Tabla de Devoluciones de Saldo a Favor */}
+          {devoluciones.length > 0 && (
+            <div className="bg-white rounded-xl sm:rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+              <div className="px-3 sm:px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <ArrowUpCircle size={16} className="text-rose-500 shrink-0" />
+                  <h3 className="text-sm font-black text-slate-800">Devoluciones de Saldo a Favor (Reembolsos a Clientes)</h3>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs sm:text-sm">
+                  <thead>
+                    <tr className="text-[10px] sm:text-xs text-slate-400 uppercase bg-slate-50 border-b border-slate-100">
+                      <th className="px-3 py-2.5 font-semibold text-left">Cliente</th>
+                      <th className="px-3 py-2.5 font-semibold text-left">Asesor</th>
+                      <th className="px-3 py-2.5 font-semibold text-center">Fecha</th>
+                      <th className="px-3 py-2.5 font-semibold text-left">Forma de Pago</th>
+                      <th className="px-3 py-2.5 font-semibold text-left">Referencia</th>
+                      <th className="px-3 py-2.5 font-semibold text-right">Monto Devuelto</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {devoluciones.map((dev, i) => (
+                      <tr key={i} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                        <td className="px-3 py-2.5 font-bold text-slate-800 truncate max-w-[180px]">
+                          {dev.cliente_nombre || 'Sin cliente'}
+                          {dev.cliente_tipo_cliente === 'personal' && (
+                            <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200 rounded">
+                              Personal
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: dev.vendedor_color || '#64748b' }} />
+                            <span className="font-semibold text-slate-600 truncate max-w-[120px]">{dev.vendedor_nombre}</span>
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5 text-center font-medium text-slate-500">
+                          {dev.creado_en ? new Date(dev.creado_en).toLocaleDateString('es-VE', { day: '2-digit', month: 'short' }) : '—'}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-black tracking-wide border ${METODO_PAGOS_STYLES[dev.forma_pago_abono] || 'bg-slate-50 text-slate-600 border-slate-100'}`}>
+                            {dev.forma_pago_abono || 'Sin especificar'}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5 font-medium text-slate-500 truncate max-w-[150px]">
+                          {dev.referencia || dev.descripcion || '—'}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-black text-rose-600">
+                          -{fmtUsd(dev.monto_usd)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
@@ -784,7 +922,7 @@ function TabVentas({ configNeg }) {
 }
 
 // ─── Modal Detalle Vendedor ──────────────────────────────────────────────────
-function ModalDetalleVendedor({ vendedor, rango, isOpen, onClose, configNeg }) {
+function ModalDetalleVendedor({ vendedor, rango, isOpen, onClose, configNeg, ajustesManuales = {} }) {
   const { data: comisionesRes, isLoading } = useComisiones({
     desde: rango?.from,
     hasta: rango?.to,
@@ -875,50 +1013,140 @@ function ModalDetalleVendedor({ vendedor, rango, isOpen, onClose, configNeg }) {
   const [exportando, setExportando] = useState(false)
   const [formatoReporte, setFormatoReporte] = useState('detallado') // 'detallado', 'resumido'
 
+  const totalConAjustes = useMemo(() => {
+    if (!vendedor) return totales;
+    const aj = ajustesManuales[vendedor.id] || { cxc: '', descuentoCarro: '' };
+    const cxcVal = Number(aj.cxc) || 0;
+    const descVal = Number(aj.descuentoCarro) || 0;
+    const rate = tasaEuro?.precio || 0;
+
+    if (formatoReporte === 'resumido') {
+      const adjustedUsd = totales.totalUsd + cxcVal - descVal;
+      const adjustedBs = adjustedUsd * rate;
+      return { totalUsd: adjustedUsd, comBs: adjustedBs };
+    }
+    return totales;
+  }, [totales, vendedor, ajustesManuales, formatoReporte, tasaEuro])
+
   async function exportarPDF(action = 'download') {
     setExportando(true)
     try {
       const { generarComisionesPDF } = await import('../services/pdf/comisionesPDF')
 
-      if (!detalle || detalle.length === 0) {
-        alert(`🔍 SIN DATOS: No hay comisiones para ${vendedor?.nombre || 'este vendedor'} en el periodo seleccionado.`)
+      let query = supabase
+        .from('comision_liberaciones')
+        .select(`
+          id,
+          comision_id,
+          despacho_id,
+          vendedor_id,
+          cuenta_id,
+          monto,
+          tipo,
+          cxc_id,
+          creado_en,
+          comisiones:comisiones!inner(
+            id,
+            totalcomision,
+            comisioncabilla,
+            comisionotros,
+            pctcabilla,
+            pctotros,
+            estado,
+            montopagado,
+            cotizacionid,
+            vendedor:usuarios(id, nombre, color, markup_pct, rol, es_externo),
+            despacho:notas_despacho(
+              id,
+              numero,
+              total_usd,
+              tasa_snapshot,
+              cliente:clientes!notas_despacho_cliente_id_fkey(id, nombre, tipo_cliente),
+              productos:notas_despacho_items(nombre_snap)
+            )
+          )
+        `)
+        .order('creado_en', { ascending: false })
+
+      if (rango?.from) {
+        query = query.gte('creado_en', `${rango.from}T00:00:00-04:00`)
+      }
+      if (rango?.to) {
+        query = query.lte('creado_en', `${rango.to}T23:59:59-04:00`)
+      }
+      if (vendedor?.id) {
+        query = query.eq('vendedor_id', vendedor.id)
+      }
+
+      const { data: rawEvents, error: errEvents } = await query
+
+      if (errEvents) {
+        console.error('Error fetching events:', errEvents)
+        alert('❌ Error al obtener las liberaciones de comisión: ' + errEvents.message)
         return
       }
 
-      // Los IDs de despacho visibles en la UI (fuente de verdad)
-      const despachoIds = new Set(detalle.map(c => c.despachoid).filter(Boolean))
+      if (!rawEvents || rawEvents.length === 0) {
+        alert(`🔍 SIN DATOS: No hay liberaciones de comisiones para ${vendedor?.nombre || 'este vendedor'} en el periodo seleccionado.`)
+        return
+      }
 
-      // Llamar al RPC para obtener detalle por artículo
-      let comisionesParaPDF = detalle // fallback por defecto
-      const { data: itemsRPC, error } = await supabase.rpc('obtener_reporte_ventas_comisiones', {
-        p_fecha_inicio: rango?.from ? `${rango.from}T00:00:00-04:00` : null,
-        p_fecha_fin: rango?.to ? `${rango.to}T23:59:59-04:00` : null,
-        p_vendedor_id: vendedor?.id
-      })
-
-      if (error) {
-        console.error('Error RPC detalle artículos:', error)
-      } else if (itemsRPC && itemsRPC.length > 0) {
-        // Filtrar SOLO los ítems que pertenecen a los despachos visibles en la UI
-        const itemsFiltrados = itemsRPC.filter(item => despachoIds.has(item.despacho_id || item.despachoid))
-        if (itemsFiltrados.length > 0) {
-          comisionesParaPDF = itemsFiltrados
+      // Fetch cotizaciones
+      const cotizacionIds = [...new Set(rawEvents.map(r => r.comisiones?.cotizacionid).filter(Boolean))]
+      let cotizacionesMap = {}
+      if (cotizacionIds.length > 0) {
+        const { data: cotList, error: cotErr } = await supabase
+          .from('cotizaciones')
+          .select('id, numero, tasa_bcv_snapshot, cliente:clientes(id, nombre)')
+          .in('id', cotizacionIds)
+        if (!cotErr && cotList) {
+          cotizacionesMap = Object.fromEntries(cotList.map(c => [c.id, c]))
         }
       }
 
-      // Enriquecer cada item con el objeto vendedor para que el PDF dibuje/clasifique correctamente
-      if (comisionesParaPDF && comisionesParaPDF.length > 0) {
-        comisionesParaPDF = comisionesParaPDF.map(item => ({
-          ...item,
-          vendedor: {
+      const comisionesParaPDF = rawEvents.map(r => {
+        const com = r.comisiones || {};
+        const desp = com.despacho || {};
+        const cot = cotizacionesMap[com.cotizacionid];
+        return {
+          id: r.id,
+          monto: Number(r.monto || 0),
+          tipo: r.tipo,
+          creado_en: r.creado_en,
+          comisiones: {
+            id: com.id,
+            totalcomision: Number(com.totalcomision || 0),
+            comisioncabilla: Number(com.comisioncabilla || 0),
+            comisionotros: Number(com.comisionotros || 0),
+            pctcabilla: Number(com.pctcabilla || 0),
+            pctotros: Number(com.pctotros || 0),
+            estado: com.estado,
+            montopagado: Number(com.montopagado || 0),
+            cotizacionid: com.cotizacionid,
+            despacho: desp ? {
+              id: desp.id,
+              numero: desp.numero,
+              totalusd: desp.total_usd,
+              tasa_snapshot: desp.tasa_snapshot,
+              cliente: desp.cliente,
+              productos: desp.productos || []
+            } : null,
+            cotizacion: cot ? {
+              id: cot.id,
+              numero: cot.numero,
+              tasa_bcv_snapshot: cot.tasa_bcv_snapshot,
+              cliente_nombre: cot.cliente?.nombre || null
+            } : null
+          },
+          vendedor: r.vendedor || com.vendedor || {
             id: vendedor?.id,
             nombre: vendedor?.nombre,
             color: vendedor?.color,
             markup_pct: vendedor?.markup_pct,
             es_externo: vendedor?.es_externo
           }
-        }))
-      }
+        };
+      });
 
       await generarComisionesPDF({
         comisiones: comisionesParaPDF,
@@ -927,7 +1155,8 @@ function ModalDetalleVendedor({ vendedor, rango, isOpen, onClose, configNeg }) {
         config: configNeg ?? {},
         action,
         formato: formatoReporte,
-        tasaEuro: tasaEuro?.precio || 0
+        tasaEuro: tasaEuro?.precio || 0,
+        ajustesManuales
       })
     } catch (e) {
       console.error('Error generando PDF individual:', e)
@@ -957,8 +1186,8 @@ function ModalDetalleVendedor({ vendedor, rango, isOpen, onClose, configNeg }) {
         <div className="space-y-4">
           {/* Fila 1: KPIs - siempre en ancho completo */}
           <div className="grid grid-cols-2 gap-4">
-            <KpiCard icon={DollarSign} label="Total Comisión USD" value={fmtUsd(totales.totalUsd)} gradient="linear-gradient(135deg, #1e293b, #0f172a)" border="rgba(255,255,255,0.05)" />
-            <KpiCard icon={Percent} label="Total Comisión Bs" value={fmtBs(totales.comBs)} gradient="linear-gradient(135deg, #065f46, #064e3b)" border="rgba(255,255,255,0.05)" />
+            <KpiCard icon={DollarSign} label="Total Comisión USD" value={fmtUsd(totalConAjustes.totalUsd)} gradient="linear-gradient(135deg, #1e293b, #0f172a)" border="rgba(255,255,255,0.05)" />
+            <KpiCard icon={Percent} label="Total Comisión Bs" value={fmtBs(totalConAjustes.comBs)} gradient="linear-gradient(135deg, #065f46, #064e3b)" border="rgba(255,255,255,0.05)" />
           </div>
 
           {/* Fila 2: Acciones */}
@@ -1259,7 +1488,7 @@ function ModalDetalleVendedor({ vendedor, rango, isOpen, onClose, configNeg }) {
 // ═══════════════════════════════════════════════════════════════════════════
 function TabComisiones({ configNeg }) {
   const { perfil } = useAuthStore()
-  const esAdmin = perfil?.rol === 'administracion'
+  const esAdmin = perfil?.rol === 'administracion' || perfil?.rol === 'jefe' || perfil?.rol === 'desarrollador'
   const esJefe = perfil?.rol === 'jefe'
   const esDev = perfil?.rol === 'desarrollador'
   const puedePagarComisiones = esAdmin || esJefe || esDev
@@ -1279,8 +1508,17 @@ function TabComisiones({ configNeg }) {
   const [exportando, setExportando] = useState(false)
   const [showPrintMenu, setShowPrintMenu] = useState(false)
   const [showExportMenu, setShowExportMenu] = useState(false)
+  // ajustesManuales: { [vendedorId]: { cxc: string, descuentoCarro: string } }
+  const [ajustesManuales, setAjustesManuales] = useState({})
 
   const [vendedorSeleccionado, setVendedorSeleccionado] = useState(null)
+
+  const setAjuste = (vId, campo, valor) => {
+    setAjustesManuales(prev => ({
+      ...prev,
+      [vId]: { ...(prev[vId] || { cxc: '', descuentoCarro: '' }), [campo]: valor }
+    }))
+  }
 
   const { data: comisionesRes, isLoading: comisionesLoading, isError, refetch } = useComisiones({
     estado: filtroEstado,
@@ -1387,112 +1625,120 @@ function TabComisiones({ configNeg }) {
     try {
       const { generarComisionesPDF } = await import('../services/pdf/comisionesPDF')
 
-      const [rpcRes, dbUsuariosRes] = await Promise.all([
-        supabase.rpc('obtener_reporte_ventas_comisiones', {
-          p_fecha_inicio: rango.from ? `${rango.from}T00:00:00-04:00` : null,
-          p_fecha_fin: rango.to ? `${rango.to}T23:59:59-04:00` : null,
-          p_vendedor_id: filtroVendedor || null
-        }),
-        supabase.from('usuarios').select('id, nombre, color, markup_pct, rol, es_externo')
-      ])
+      const params = new URLSearchParams()
+      params.set('vista', 'eventos')
+      params.set('page', '1')
+      params.set('pageSize', '500')
+      if (rango.from) params.set('desde', rango.from)
+      if (rango.to) params.set('hasta', rango.to)
+      if (filtroVendedor) params.set('vendedorId', filtroVendedor)
 
-      let { data: detalleCompleto, error } = rpcRes
-      const dbUsuarios = dbUsuariosRes.data ?? []
+      const headers = await getAuthHeaders()
+      const res = await fetch(apiUrl(`/api/comisiones/lista?${params}`), { headers })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`HTTP ${res.status}: ${text}`)
+      }
+      const resJson = await res.json()
+      const rawEvents = resJson.data || []
 
-      if (error) console.error('Error RPC General:', error)
-
-      // Fallback a datos cargados en el hook useComisiones
-      if ((!detalleCompleto || detalleCompleto.length === 0) && comisiones.length > 0) {
-        detalleCompleto = comisiones;
+      if (!rawEvents || rawEvents.length === 0) {
+        alert(`🔍 SIN DATOS: No hay liberaciones de comisiones entre ${rango.from} y ${rango.to}.`)
+        return
       }
 
-      // Los IDs de despacho visibles en la UI (fuente de verdad)
-      if (comisiones.length > 0) {
-        const despachoIds = new Set(comisiones.map(c => c.despachoid).filter(Boolean))
-        if (detalleCompleto && detalleCompleto.length > 0) {
-          const itemsFiltrados = detalleCompleto.filter(item => despachoIds.has(item.despacho_id || item.despachoid))
-          if (itemsFiltrados.length > 0) {
-            detalleCompleto = itemsFiltrados
-          }
-        }
-      }
+      let filteredEvents = rawEvents
 
-      if (!detalleCompleto || detalleCompleto.length === 0) {
-        alert(`🔍 SIN DATOS: No hay comisiones registradas entre ${rango.from} y ${rango.to}.`);
-        return;
-      }
-
-      // Crear lookup map de usuarios
-      const userLookup = {}
-      if (dbUsuarios) {
-        dbUsuarios.forEach(u => {
-          if (u.nombre) {
-            userLookup[u.nombre.trim().toLowerCase()] = {
-              id: u.id,
-              nombre: u.nombre,
-              color: u.color,
-              markup_pct: u.markup_pct != null ? Number(u.markup_pct) : null,
-              es_externo: !!u.es_externo
-            }
-          }
-        })
-      }
-
-      // Enriquecer detalleCompleto con la información de vendedor (incluyendo markup_pct)
-      detalleCompleto = detalleCompleto.map(item => {
-        if (item.vendedor) return item
-        const key = item.asesor ? item.asesor.trim().toLowerCase() : ''
-        const uInfo = userLookup[key]
-        return {
-          ...item,
-          vendedor: uInfo ? {
-            id: uInfo.id,
-            nombre: uInfo.nombre,
-            color: uInfo.color,
-            markup_pct: uInfo.markup_pct,
-            es_externo: uInfo.es_externo
-          } : {
-            nombre: item.asesor || 'Sin Asesor',
-            color: item.asesor_color || '#1B365D',
-            markup_pct: null,
-            es_externo: false
-          }
-        }
-      })
-
-      // Filtrar comisiones según el tipo de vendedor seleccionado
       if (tipoFiltro === 'internos') {
-        detalleCompleto = detalleCompleto.filter(c => {
-          const v = c.vendedor
+        filteredEvents = rawEvents.filter(r => {
+          const v = r.vendedor || r.comisiones?.vendedor
           const esExterno = !!v?.es_externo || (v?.markup_pct != null && Number(v.markup_pct) > 0)
           return !esExterno
         })
       } else if (tipoFiltro === 'externos') {
-        detalleCompleto = detalleCompleto.filter(c => {
-          const v = c.vendedor
+        filteredEvents = rawEvents.filter(r => {
+          const v = r.vendedor || r.comisiones?.vendedor
           const esExterno = !!v?.es_externo || (v?.markup_pct != null && Number(v.markup_pct) > 0)
           return esExterno
         })
       }
 
-      if (detalleCompleto.length === 0) {
+      if (filteredEvents.length === 0) {
         alert(`🔍 SIN DATOS: No hay comisiones registradas para el grupo de vendedores seleccionado en este rango.`);
         return;
+      }
+
+      // Fetch cotizaciones
+      const cotizacionIds = [...new Set(filteredEvents.map(r => r.comisiones?.cotizacionid).filter(Boolean))]
+      let cotizacionesMap = {}
+      if (cotizacionIds.length > 0) {
+        const { data: cotList, error: cotErr } = await supabase
+          .from('cotizaciones')
+          .select('id, numero, tasa_bcv_snapshot, cliente:clientes(id, nombre)')
+          .in('id', cotizacionIds)
+        if (!cotErr && cotList) {
+          cotizacionesMap = Object.fromEntries(cotList.map(c => [c.id, c]))
+        }
       }
 
       const vendedorInfo = filtroVendedor
         ? vendedoresAgrupados.find(v => v.id === filtroVendedor)
         : null
 
+      const comisionesParaPDF = filteredEvents.map(r => {
+        const com = r.comisiones || {};
+        const desp = com.despacho || {};
+        const cot = cotizacionesMap[com.cotizacionid] || com.cotizacion;
+        return {
+          id: r.id,
+          monto: Number(r.monto || 0),
+          tipo: r.tipo,
+          creado_en: r.creado_en,
+          comisiones: {
+            id: com.id,
+            totalcomision: Number(com.totalcomision || 0),
+            comisioncabilla: Number(com.comisioncabilla || 0),
+            comisionotros: Number(com.comisionotros || 0),
+            pctcabilla: Number(com.pctcabilla || 0),
+            pctotros: Number(com.pctotros || 0),
+            estado: com.estado,
+            montopagado: Number(com.montopagado || 0),
+            cotizacionid: com.cotizacionid,
+            despacho: desp ? {
+              id: desp.id,
+              numero: desp.numero,
+              totalusd: desp.totalusd !== undefined ? desp.totalusd : desp.total_usd,
+              tasa_snapshot: desp.tasa_snapshot,
+              cliente: desp.cliente,
+              productos: desp.productos || []
+            } : null,
+            cotizacion: cot ? {
+              id: cot.id,
+              numero: cot.numero,
+              tasa_bcv_snapshot: cot.tasa_bcv_snapshot,
+              cliente_nombre: cot.cliente_nombre || cot.cliente?.nombre || null
+            } : null
+          },
+          vendedor: r.vendedor || com.vendedor || (vendedorInfo ? {
+            id: vendedorInfo.id,
+            nombre: vendedorInfo.nombre,
+            color: vendedorInfo.color,
+            markup_pct: vendedorInfo.markup_pct,
+            es_externo: vendedorInfo.es_externo
+          } : null)
+        };
+      });
+
       await generarComisionesPDF({
-        comisiones: detalleCompleto || [],
+        comisiones: comisionesParaPDF,
         vendedor: vendedorInfo ? { nombre: vendedorInfo.nombre, color: vendedorInfo.color, markup_pct: vendedorInfo.markup_pct, es_externo: vendedorInfo.es_externo } : null,
         tipoVendedor: tipoFiltro === 'todos' ? null : tipoFiltro,
         rango,
         config: configNeg ?? {},
         action: accion === 'imprimir' ? 'print' : 'download',
         formato: formatoReporte,
-        tasaEuro: tasaEuro?.precio || 0
+        tasaEuro: tasaEuro?.precio || 0,
+        ajustesManuales
       })
     } catch (e) {
       console.error('Error generando PDF general:', e)
@@ -1507,58 +1753,132 @@ function TabComisiones({ configNeg }) {
     try {
       const { generarComisionesPDF } = await import('../services/pdf/comisionesPDF')
 
-      let { data: detalleVendedor, error } = await supabase.rpc('obtener_reporte_ventas_comisiones', {
-        p_fecha_inicio: rango.from ? `${rango.from}T00:00:00-04:00` : null,
-        p_fecha_fin: rango.to ? `${rango.to}T23:59:59-04:00` : null,
-        p_vendedor_id: vendedor.id
-      })
+      let query = supabase
+        .from('comision_liberaciones')
+        .select(`
+          id,
+          comision_id,
+          despacho_id,
+          vendedor_id,
+          cuenta_id,
+          monto,
+          tipo,
+          cxc_id,
+          creado_en,
+          comisiones:comisiones!inner(
+            id,
+            totalcomision,
+            comisioncabilla,
+            comisionotros,
+            pctcabilla,
+            pctotros,
+            estado,
+            montopagado,
+            cotizacionid,
+            vendedor:usuarios(id, nombre, color, markup_pct, rol, es_externo),
+            despacho:notas_despacho(
+              id,
+              numero,
+              total_usd,
+              tasa_snapshot,
+              cliente:clientes!notas_despacho_cliente_id_fkey(id, nombre, tipo_cliente),
+              productos:notas_despacho_items(nombre_snap)
+            )
+          )
+        `)
+        .order('creado_en', { ascending: false })
 
-      if (error) console.error('Error RPC Individual:', error)
-
-      // Fallback filtrando de la lista general si la RPC falla
-      if ((!detalleVendedor || detalleVendedor.length === 0) && comisiones.length > 0) {
-        detalleVendedor = comisiones.filter(c => (c.vendedor?.id || c.vendedor_id) === vendedor.id);
+      if (rango.from) {
+        query = query.gte('creado_en', `${rango.from}T00:00:00-04:00`)
+      }
+      if (rango.to) {
+        query = query.lte('creado_en', `${rango.to}T23:59:59-04:00`)
+      }
+      if (vendedor.id) {
+        query = query.eq('vendedor_id', vendedor.id)
       }
 
-      // Los IDs de despacho del vendedor visibles en la UI (fuente de verdad)
-      const comisionesVendedorUI = comisiones.filter(c => (c.vendedor?.id || c.vendedor_id) === vendedor.id)
-      if (comisionesVendedorUI.length > 0) {
-        const despachoIds = new Set(comisionesVendedorUI.map(c => c.despachoid).filter(Boolean))
-        if (detalleVendedor && detalleVendedor.length > 0) {
-          const itemsFiltrados = detalleVendedor.filter(item => despachoIds.has(item.despacho_id || item.despachoid))
-          if (itemsFiltrados.length > 0) {
-            detalleVendedor = itemsFiltrados
+      const { data: rawEvents, error: errEvents } = await query
+
+      if (errEvents) {
+        console.error('Error fetching events:', errEvents)
+        alert('❌ Error al obtener las liberaciones de comisión: ' + errEvents.message)
+        return
+      }
+
+      if (!rawEvents || rawEvents.length === 0) {
+        alert(`🔍 SIN DATOS: No hay registros para ${vendedor.nombre} en este rango.`)
+        return
+      }
+
+      // Fetch cotizaciones
+      const cotizacionIds = [...new Set(rawEvents.map(r => r.comisiones?.cotizacionid).filter(Boolean))]
+      let cotizacionesMap = {}
+      if (cotizacionIds.length > 0) {
+        const { data: cotList, error: cotErr } = await supabase
+          .from('cotizaciones')
+          .select('id, numero, tasa_bcv_snapshot, cliente:clientes(id, nombre)')
+          .in('id', cotizacionIds)
+        if (!cotErr && cotList) {
+          cotizacionesMap = Object.fromEntries(cotList.map(c => [c.id, c]))
+        }
+      }
+
+      const comisionesParaPDF = rawEvents.map(r => {
+        const com = r.comisiones || {};
+        const desp = com.despacho || {};
+        const cot = cotizacionesMap[com.cotizacionid];
+        return {
+          id: r.id,
+          monto: Number(r.monto || 0),
+          tipo: r.tipo,
+          creado_en: r.creado_en,
+          comisiones: {
+            id: com.id,
+            totalcomision: Number(com.totalcomision || 0),
+            comisioncabilla: Number(com.comisioncabilla || 0),
+            comisionotros: Number(com.comisionotros || 0),
+            pctcabilla: Number(com.pctcabilla || 0),
+            pctotros: Number(com.pctotros || 0),
+            estado: com.estado,
+            montopagado: Number(com.montopagado || 0),
+            cotizacionid: com.cotizacionid,
+            despacho: desp ? {
+              id: desp.id,
+              numero: desp.numero,
+              totalusd: desp.total_usd,
+              tasa_snapshot: desp.tasa_snapshot,
+              cliente: desp.cliente,
+              productos: desp.productos || []
+            } : null,
+            cotizacion: cot ? {
+              id: cot.id,
+              numero: cot.numero,
+              tasa_bcv_snapshot: cot.tasa_bcv_snapshot,
+              cliente_nombre: cot.cliente?.nombre || null
+            } : null
+          },
+          vendedor: r.vendedor || com.vendedor || {
+            id: vendedor.id,
+            nombre: vendedor.nombre,
+            color: vendedor.color,
+            markup_pct: vendedor.markup_pct,
+            es_externo: vendedor.es_externo
           }
-        }
-      }
-
-      if (!detalleVendedor || detalleVendedor.length === 0) {
-        alert(`🔍 SIN DATOS: No hay registros para ${vendedor.nombre} en este rango.`);
-        return;
-      }
-
-      // Enriquecer cada item con el objeto vendedor para que el PDF dibuje/clasifique correctamente
-      detalleVendedor = detalleVendedor.map(item => ({
-        ...item,
-        vendedor: {
-          id: vendedor.id,
-          nombre: vendedor.nombre,
-          color: vendedor.color,
-          markup_pct: vendedor.markup_pct,
-          es_externo: vendedor.es_externo
-        }
-      }))
+        };
+      });
 
       await generarComisionesPDF({
-        comisiones: detalleVendedor || [],
+        comisiones: comisionesParaPDF,
         vendedor: { nombre: vendedor.nombre, color: vendedor.color, markup_pct: vendedor.markup_pct, es_externo: vendedor.es_externo },
         rango,
         config: configNeg ?? {},
         formato: formatoReporte,
-        tasaEuro: tasaEuro?.precio || 0
+        tasaEuro: tasaEuro?.precio || 0,
+        ajustesManuales
       })
     } catch (e) {
-      console.error('Error generando PDF individual:', e)
+      console.error('Error generating PDF individual:', e)
       alert('❌ Error al generar PDF de ' + vendedor.nombre + ': ' + e.message)
     } finally {
       setExportando(false)
@@ -1586,16 +1906,15 @@ function TabComisiones({ configNeg }) {
               {esAdmin && (
                 <div className="w-52">
                   <label className="text-[10px] font-black text-slate-400 uppercase ml-1 mb-1 block tracking-wider">Vendedor</label>
-                  <select
+                  <CustomSelect
+                    options={[
+                      { value: '', label: 'Todos los Asesores' },
+                      ...vendedoresDisponibles.map(v => ({ value: v.id, label: v.nombre }))
+                    ]}
                     value={filtroVendedor}
-                    onChange={e => setFiltroVendedor(e.target.value)}
-                    className="w-full h-9 px-3 rounded-xl border border-slate-200 text-xs font-bold focus:ring-4 focus:ring-indigo-500/10 outline-none bg-slate-50/50 appearance-none cursor-pointer hover:border-indigo-300 transition-all"
-                  >
-                    <option value="">Todos los Asesores</option>
-                    {vendedoresDisponibles.map(v => (
-                      <option key={v.id} value={v.id}>{v.nombre}</option>
-                    ))}
-                  </select>
+                    onChange={setFiltroVendedor}
+                    placeholder="Todos los Asesores"
+                  />
                 </div>
               )}
 
@@ -1643,27 +1962,27 @@ function TabComisiones({ configNeg }) {
                 </div>
               )}
 
-              <div className="flex items-center gap-2.5 relative shrink-0">
+              <div className="flex items-center gap-1.5 relative shrink-0">
                 {/* BOTÓN IMPRIMIR PDF */}
                 <div className="relative">
                   {filtroVendedor ? (
                     <button
                       onClick={() => exportarPDF('todos', 'imprimir')}
                       disabled={exportando || comisiones.length === 0}
-                      className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-xl border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 transition-all active:scale-[0.98] disabled:opacity-50 shadow-sm h-9"
+                      className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 sm:px-3.5 rounded-xl border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 transition-all active:scale-[0.98] disabled:opacity-50 shadow-sm h-9"
                     >
                       <Printer size={12} className="text-slate-500" />
-                      {exportando ? 'Generando...' : 'Imprimir PDF'}
+                      <span className="hidden sm:inline">{exportando ? 'Generando...' : 'Imprimir PDF'}</span>
                     </button>
                   ) : (
                     <>
                       <button
                         onClick={() => setShowPrintMenu(!showPrintMenu)}
                         disabled={exportando || comisiones.length === 0}
-                        className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-xl border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 transition-all active:scale-[0.98] disabled:opacity-50 shadow-sm h-9"
+                        className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 sm:px-3.5 rounded-xl border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 transition-all active:scale-[0.98] disabled:opacity-50 shadow-sm h-9"
                       >
                         <Printer size={12} className="text-slate-500" />
-                        {exportando ? 'Generando...' : 'Imprimir PDF'}
+                        <span className="hidden sm:inline">{exportando ? 'Generando...' : 'Imprimir PDF'}</span>
                         <ChevronDown size={12} className={`transition-transform duration-200 ${showPrintMenu ? 'rotate-180' : ''}`} />
                       </button>
 
@@ -1714,22 +2033,22 @@ function TabComisiones({ configNeg }) {
                     <button
                       onClick={() => exportarPDF('todos', 'descargar')}
                       disabled={exportando || comisiones.length === 0}
-                      className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-xl text-white transition-all active:scale-[0.98] disabled:opacity-50 shadow-md h-9"
+                      className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 sm:px-3.5 rounded-xl text-white transition-all active:scale-[0.98] disabled:opacity-50 shadow-md h-9"
                       style={{ background: 'linear-gradient(135deg, #1B365D, #0d1f3c)' }}
                     >
                       <Download size={12} />
-                      {exportando ? 'Generando...' : 'Descargar PDF'}
+                      <span className="hidden sm:inline">{exportando ? 'Generando...' : 'Descargar PDF'}</span>
                     </button>
                   ) : (
                     <>
                       <button
                         onClick={() => setShowExportMenu(!showExportMenu)}
                         disabled={exportando || comisiones.length === 0}
-                        className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-xl text-white transition-all active:scale-[0.98] disabled:opacity-50 shadow-md h-9"
+                        className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 sm:px-3.5 rounded-xl text-white transition-all active:scale-[0.98] disabled:opacity-50 shadow-md h-9"
                         style={{ background: 'linear-gradient(135deg, #1B365D, #0d1f3c)' }}
                       >
                         <Download size={12} />
-                        {exportando ? 'Generando...' : 'Descargar PDF'}
+                        <span className="hidden sm:inline">{exportando ? 'Generando...' : 'Descargar PDF'}</span>
                         <ChevronDown size={12} className={`transition-transform duration-200 ${showExportMenu ? 'rotate-180' : ''}`} />
                       </button>
 
@@ -1778,6 +2097,82 @@ function TabComisiones({ configNeg }) {
           </div>
         </div>
       </div>
+
+      {/* Panel de Ajustes Manuales para Reporte Resumido */}
+      {formatoReporte === 'resumido' && !comisionesLoading && !isError && vendedoresAgrupados.length > 0 && (
+        <div className="bg-white rounded-2xl border border-amber-200 shadow-sm overflow-hidden">
+          <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200 flex items-center gap-2">
+            <span className="text-base">✏️</span>
+            <div>
+              <p className="text-xs font-black text-amber-800 uppercase tracking-wide">Ajustes Manuales — Reporte Resumido</p>
+              <p className="text-[10px] text-amber-600 font-medium">Ingresa los montos de Comisión CxC y Descuento Carro por vendedor antes de generar el PDF.</p>
+            </div>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {vendedoresAgrupados.map(v => {
+              const aj = ajustesManuales[v.id] || { cxc: '', descuentoCarro: '' }
+              const comisionGen = v.totalUsd || 0
+              const cxcVal = Number(aj.cxc) || 0
+              const descVal = Number(aj.descuentoCarro) || 0
+              const totalPagar = comisionGen + cxcVal - descVal
+              const tasa = tasaEuro?.precio || 0
+              return (
+                <div key={v.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5">
+                  {/* Nombre vendedor */}
+                  <div className="flex items-center gap-2 w-40 shrink-0">
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0" style={{ backgroundColor: v.color }}>
+                      {v.nombre.charAt(0).toUpperCase()}
+                    </div>
+                    <span className="text-xs font-bold text-slate-800 truncate">{v.nombre}</span>
+                  </div>
+                  {/* Comisión periodo (solo lectura) */}
+                  <div className="flex flex-col items-start">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-wide mb-0.5">Comisión Periodo</label>
+                    <span className="text-xs font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">${comisionGen.toFixed(2)}</span>
+                  </div>
+                  {/* CxC input */}
+                  <div className="flex flex-col items-start">
+                    <label className="text-[9px] font-black text-amber-600 uppercase tracking-wide mb-0.5">Comisión CxC ($)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={aj.cxc}
+                      onChange={e => setAjuste(v.id, 'cxc', e.target.value)}
+                      className="w-28 h-8 px-2 text-xs font-bold border border-amber-200 bg-amber-50 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400/40 focus:border-amber-400 text-amber-800 placeholder-amber-300"
+                    />
+                  </div>
+                  {/* Descuento Carro input */}
+                  <div className="flex flex-col items-start">
+                    <label className="text-[9px] font-black text-red-600 uppercase tracking-wide mb-0.5">Descuento Carro ($)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={aj.descuentoCarro}
+                      onChange={e => setAjuste(v.id, 'descuentoCarro', e.target.value)}
+                      className="w-28 h-8 px-2 text-xs font-bold border border-red-200 bg-red-50 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-400/40 focus:border-red-400 text-red-800 placeholder-red-300"
+                    />
+                  </div>
+                  {/* Total a pagar calculado */}
+                  <div className="flex flex-col items-start ml-auto">
+                    <label className="text-[9px] font-black text-indigo-500 uppercase tracking-wide mb-0.5">Total a Pagar</label>
+                    <span className="text-sm font-black text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1">${totalPagar.toFixed(2)}</span>
+                  </div>
+                  {tasa > 0 && (
+                    <div className="flex flex-col items-start">
+                      <label className="text-[9px] font-black text-emerald-600 uppercase tracking-wide mb-0.5">Total en Bs</label>
+                      <span className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1">Bs {(totalPagar * tasa).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {comisionesLoading || resumenLoading ? (
         <SkeletonReporte />
@@ -2002,6 +2397,7 @@ function TabComisiones({ configNeg }) {
             vendedor={vendedorSeleccionado}
             rango={rango}
             configNeg={configNeg}
+            ajustesManuales={ajustesManuales}
           />
 
           {comisiones.length === 0 && (
@@ -2127,21 +2523,32 @@ function AgingBars({ aging }) {
 }
 
 function TabCredito() {
-  const { data, isLoading, isError, refetch } = useResumenCxC()
+  const { data: cxcData, isLoading: cxcLoading, isError: cxcError, refetch: refetchCxc } = useResumenCxC()
+  const { data: proveedores = [], isLoading: provLoading, isError: provError, refetch: refetchProv } = useProveedores()
+
+  const [seccionCredito, setSeccionCredito] = useState('cxc') // 'cxc' | 'cxp'
   const [sortBy, setSortBy] = useState('saldo') // 'saldo' | 'dias' | 'diasRestantes'
   const [sortDir, setSortDir] = useState('desc')
   const { perfil } = useAuthStore()
-  const esAdmin = perfil?.rol === 'administracion' || perfil?.rol === 'desarrollador'
+  const esAdmin = perfil?.rol === 'administracion' || perfil?.rol === 'desarrollador' || perfil?.rol === 'jefe'
 
   const [exportandoCxC, setExportandoCxC] = useState(false)
   const { data: configNeg = {} } = useConfigNegocio()
+
+  const isLoading = cxcLoading || provLoading
+  const isError = cxcError || provError
+
+  const refetch = () => {
+    refetchCxc()
+    refetchProv()
+  }
 
   async function exportarCxCPDF(tipoReporte = 'detallado', accion = 'descargar') {
     setExportandoCxC(true)
     try {
       const { generarReporteCxCPDF } = await import('../services/pdf/cxcPDF')
       await generarReporteCxCPDF({
-        data,
+        data: cxcData,
         config: configNeg,
         action: accion === 'imprimir' ? 'print' : 'download',
         tipo: tipoReporte
@@ -2160,17 +2567,29 @@ function TabCredito() {
 
   if (isLoading) return <SkeletonReporte />
   if (isError) return <ErrorMsg onRetry={refetch} />
-  if (!data || data.kpis.numClientesConDeuda === 0) {
+
+  // Normalizar datos de CxC
+  const kpis = cxcData?.kpis || { totalDeuda: 0, numClientesConDeuda: 0, promedioDeuda: 0, diasMasAntiguo: 0, numCargos: 0 }
+  const clientesConDeuda = cxcData?.clientesConDeuda || []
+  const aging = cxcData?.aging || []
+  const alertasVencimiento = cxcData?.alertasVencimiento || []
+  const abonos = cxcData?.abonos || []
+
+  // Calcular métricas de CxP (Proveedores)
+  const proveedoresConDeuda = proveedores.filter(p => Number(p.saldo_pendiente || 0) > 0)
+  const totalCxC = Number(kpis.totalDeuda || 0)
+  const totalCxP = proveedores.reduce((sum, p) => sum + (p.activo ? Number(p.saldo_pendiente || 0) : 0), 0)
+  const balanceNeto = totalCxC - totalCxP
+
+  if (totalCxC === 0 && proveedoresConDeuda.length === 0) {
     return (
       <EmptyState
         icon={CreditCard}
-        title="Sin créditos pendientes"
-        description="No hay clientes con saldo pendiente actualmente."
+        title="Sin saldos pendientes"
+        description="No hay deudas de clientes (CxC) ni cuentas por pagar a proveedores (CxP) actualmente."
       />
     )
   }
-
-  const { kpis, clientesConDeuda, aging, alertasVencimiento, abonos } = data
 
   const clientesOrdenados = [...clientesConDeuda].sort((a, b) => {
     let va, vb
@@ -2185,6 +2604,12 @@ function TabCredito() {
       vb = b.diasSinPago ?? 0
     }
     return sortDir === 'desc' ? vb - va : va - vb
+  })
+
+  const proveedoresOrdenados = [...proveedoresConDeuda].sort((a, b) => {
+    const sa = Number(a.saldo_pendiente)
+    const sb = Number(b.saldo_pendiente)
+    return sb - sa // Mayor deuda primero
   })
 
   const maxSaldo = Math.max(...clientesConDeuda.map(c => Number(c.saldo_pendiente)), 1)
@@ -2229,7 +2654,7 @@ function TabCredito() {
                 </div>
                 <div className="text-right">
                   <div className="text-xs font-black text-orange-600">
-                    ${Number(alerta.saldo_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {fmtUsd(alerta.saldo_usd)}
                   </div>
                   <div className="text-[10px] font-semibold text-orange-500">
                     {alerta.diasRestantes < 0 
@@ -2249,183 +2674,268 @@ function TabCredito() {
       {/* KPIs — 4 tarjetas */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard
-          icon={DollarSign} label="Total por cobrar"
-          value={`$${Number(kpis.totalDeuda).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          icon={DollarSign} label="Total por cobrar (CxC)"
+          value={fmtUsd(totalCxC)}
+          sub={`${kpis.numClientesConDeuda} clientes con deuda`}
           gradient="linear-gradient(135deg, #991b1b, #b91c1c)" border="rgba(255,255,255,0.10)"
         />
         <KpiCard
-          icon={Users} label="Clientes con deuda"
-          value={String(kpis.numClientesConDeuda)}
-          sub={kpis.promedioDeuda > 0 ? `Prom. $${Number(kpis.promedioDeuda).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : undefined}
-          gradient="linear-gradient(135deg, #92400e, #B8860B)" border="rgba(255,255,255,0.10)"
+          icon={Briefcase} label="Total por pagar (CxP)"
+          value={fmtUsd(totalCxP)}
+          sub={`${proveedoresConDeuda.length} proveedores con deuda`}
+          gradient="linear-gradient(135deg, #7c3aed, #6d28d9)" border="rgba(255,255,255,0.10)"
+        />
+        <KpiCard
+          icon={DollarSign} label="Balance Neto (CxC - CxP)"
+          value={fmtUsd(balanceNeto)}
+          sub={balanceNeto >= 0 ? "Superávit de cartera" : "Déficit de cartera"}
+          gradient={balanceNeto >= 0 ? "linear-gradient(135deg, #065f46, #047857)" : "linear-gradient(135deg, #b45309, #92400e)"} border="rgba(255,255,255,0.10)"
         />
         <KpiCard
           icon={Clock} label="Deuda más antigua"
-          value={`${kpis.diasMasAntiguo}d`}
-          sub="días sin pago"
-          gradient={kpis.diasMasAntiguo > 60 ? "linear-gradient(135deg, #7c3aed, #6d28d9)" : "linear-gradient(135deg, #1e3a5f, #1B365D)"} border="rgba(255,255,255,0.07)"
-        />
-        <KpiCard
-          icon={CreditCard} label="Total cargos"
-          value={String(kpis.numCargos)}
-          sub="órdenes a crédito"
-          gradient="linear-gradient(135deg, #065f46, #047857)" border="rgba(255,255,255,0.10)"
+          value={`${kpis.diasMasAntiguo || 0}d`}
+          sub="días transcurridos"
+          gradient="linear-gradient(135deg, #1e3a5f, #1B365D)" border="rgba(255,255,255,0.07)"
         />
       </div>
 
-      {/* Aging con barras */}
-      <AgingBars aging={aging} />
+      {/* Selector de Sección: CxC Clientes vs CxP Proveedores */}
+      <div className="flex p-0.5 bg-slate-100/80 rounded-xl max-w-md h-9">
+        <button
+          onClick={() => setSeccionCredito('cxc')}
+          className={`flex-1 text-xs font-bold rounded-lg transition-all ${seccionCredito === 'cxc' ? 'bg-white shadow-md text-primary font-black' : 'text-slate-500 hover:text-slate-700'}`}
+        >
+          Clientes (CxC)
+        </button>
+        <button
+          onClick={() => setSeccionCredito('cxp')}
+          className={`flex-1 text-xs font-bold rounded-lg transition-all ${seccionCredito === 'cxp' ? 'bg-white shadow-md text-primary font-black' : 'text-slate-500 hover:text-slate-700'}`}
+        >
+          Proveedores (CxP)
+        </button>
+      </div>
 
-      {/* Tabla de clientes mejorada */}
-      <div className="bg-white rounded-xl sm:rounded-2xl border border-slate-200 overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Users size={14} className="text-red-500" />
-            <h3 className="text-xs sm:text-sm font-black text-slate-800">Clientes con saldo pendiente</h3>
-            <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-600 text-[10px] font-bold">{clientesConDeuda.length}</span>
-          </div>
+      {seccionCredito === 'cxc' ? (
+        <>
+          {/* Aging con barras */}
+          <AgingBars aging={aging} />
 
-          <div className="flex items-center gap-2">
-            {/* BOTÓN IMPRIMIR */}
-            <button
-              onClick={() => exportarCxCPDF('detallado', 'imprimir')}
-              disabled={exportandoCxC}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 transition-all text-xs font-bold active:scale-[0.98] disabled:opacity-50 shadow-sm"
-              title="Imprimir Reporte CxC"
-            >
-              <Printer size={13} className="text-slate-500" />
-              <span className="hidden sm:inline">Imprimir</span>
-            </button>
+          {/* Tabla de clientes mejorada */}
+          <div className="bg-white rounded-xl sm:rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Users size={14} className="text-red-500" />
+                <h3 className="text-xs sm:text-sm font-black text-slate-800">Clientes con saldo pendiente</h3>
+                <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-600 text-[10px] font-bold">{clientesConDeuda.length}</span>
+              </div>
 
-            {/* BOTÓN DESCARGAR */}
-            <button
-              onClick={() => exportarCxCPDF('detallado', 'descargar')}
-              disabled={exportandoCxC}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white transition-all text-xs font-bold active:scale-[0.98] disabled:opacity-50 shadow-sm"
-              title="Descargar Reporte CxC"
-            >
-              {exportandoCxC ? (
-                <Loader2 size={13} className="animate-spin text-white" />
-              ) : (
-                <Download size={13} className="text-white" />
-              )}
-              <span className="hidden sm:inline">{exportandoCxC ? 'Generando...' : 'Descargar'}</span>
-            </button>
-          </div>
-        </div>
+              <div className="flex items-center gap-2">
+                {/* BOTÓN IMPRIMIR */}
+                <button
+                  onClick={() => exportarCxCPDF('detallado', 'imprimir')}
+                  disabled={exportandoCxC}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 transition-all text-xs font-bold active:scale-[0.98] disabled:opacity-50 shadow-sm"
+                  title="Imprimir Reporte CxC"
+                >
+                  <Printer size={13} className="text-slate-500" />
+                  <span className="hidden sm:inline">Imprimir</span>
+                </button>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-[10px] text-slate-400 uppercase bg-slate-50 border-b border-slate-100">
-                <th className="px-4 py-2.5 text-left font-semibold">Cliente</th>
-                <th className="px-3 py-2.5 text-left font-semibold">Vendedor</th>
-                <th className="px-3 py-2.5 text-center font-semibold">Riesgo</th>
-                <th className="px-3 py-2.5 text-center">
-                  <SortBtn col="dias" label="Antigüedad" />
-                </th>
-                <th className="px-3 py-2.5 text-center">
-                  <SortBtn col="diasRestantes" label="Días Restantes" />
-                </th>
-                <th className="px-3 py-2.5 text-right">
-                  <SortBtn col="saldo" label="Saldo USD" />
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {clientesOrdenados.map((c, i) => {
-                const saldo = Number(c.saldo_pendiente)
-                const dias = c.diasSinPago ?? 0
-                const riesgo = riesgoCliente(dias)
-                const barPct = Math.min((saldo / maxSaldo) * 100, 100)
+                {/* BOTÓN DESCARGAR */}
+                <button
+                  onClick={() => exportarCxCPDF('detallado', 'descargar')}
+                  disabled={exportandoCxC}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white transition-all text-xs font-bold active:scale-[0.98] disabled:opacity-50 shadow-sm"
+                  title="Descargar Reporte CxC"
+                >
+                  {exportandoCxC ? (
+                    <Loader2 size={13} className="animate-spin text-white" />
+                  ) : (
+                    <Download size={13} className="text-white" />
+                  )}
+                  <span className="hidden sm:inline">{exportandoCxC ? 'Generando...' : 'Descargar'}</span>
+                </button>
+              </div>
+            </div>
 
-                return (
-                  <tr key={c.id} className={`border-b border-slate-50 hover:bg-slate-50/60 transition-colors ${i % 2 === 0 ? '' : 'bg-slate-50/20'}`}>
-                    {/* Cliente */}
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <p className="font-bold text-slate-800 leading-tight">{c.nombre}</p>
-                        {c.cargosActivos && c.cargosActivos.some(car => car.metodo_pago === 'cod') && (
-                          <span className="bg-blue-100 text-blue-800 text-[8px] font-black px-1.5 py-0.5 rounded border border-blue-200 shrink-0">
-                            COD
-                          </span>
-                        )}
-                      </div>
-                      {c.rif_cedula && <p className="text-[10px] text-slate-400 font-mono mt-0.5">{c.rif_cedula}</p>}
-                      {/* Mini barra de saldo relativo */}
-                      <div className="mt-1.5 h-1 rounded-full bg-slate-100 w-24 overflow-hidden">
-                        <div className="h-full rounded-full" style={{ width: `${barPct}%`, background: riesgo.bar }} />
-                      </div>
-                    </td>
-                    {/* Vendedor */}
-                    <td className="px-3 py-3">
-                      {c.vendedor ? (
-                        <span className="flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: c.vendedor.color || '#64748b' }} />
-                          <span className="text-slate-600 font-medium">{c.vendedor.nombre}</span>
-                        </span>
-                      ) : <span className="text-slate-300">—</span>}
-                    </td>
-                    {/* Riesgo badge */}
-                    <td className="px-3 py-3 text-center">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${riesgo.bg} ${riesgo.text}`}>
-                        {riesgo.label}
-                      </span>
-                    </td>
-                    {/* Antigüedad */}
-                    <td className="px-3 py-3 text-center">
-                      <span className={`font-black text-sm ${dias > 60 ? 'text-red-600' : dias > 30 ? 'text-amber-600' : 'text-slate-600'}`}>
-                        {dias}d
-                      </span>
-                    </td>
-                    {/* Días Restantes */}
-                    <td className="px-3 py-3 text-center">
-                      {c.diasRestantes === null ? (
-                        <span className="text-slate-300">—</span>
-                      ) : c.diasRestantes < 0 ? (
-                        <span className="inline-flex px-2 py-1 rounded-full text-[10px] font-black bg-red-100 text-red-700">
-                          Vencido ({Math.abs(c.diasRestantes)}d)
-                        </span>
-                      ) : c.diasRestantes === 0 ? (
-                        <span className="inline-flex px-2 py-1 rounded-full text-[10px] font-black bg-amber-100 text-amber-700">
-                          Vence hoy
-                        </span>
-                      ) : (
-                        <span className="inline-flex px-2 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700">
-                          {c.diasRestantes}d restantes
-                        </span>
-                      )}
-                    </td>
-                    {/* Saldo */}
-                    <td className="px-3 py-3 text-right">
-                      <span className="font-black text-red-600 text-sm">
-                        ${saldo.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-[10px] text-slate-400 uppercase bg-slate-50 border-b border-slate-100">
+                    <th className="px-4 py-2.5 text-left font-semibold">Cliente</th>
+                    <th className="px-3 py-2.5 text-left font-semibold">Vendedor</th>
+                    <th className="px-3 py-2.5 text-center font-semibold">Riesgo</th>
+                    <th className="px-3 py-2.5 text-center">
+                      <SortBtn col="dias" label="Antigüedad" />
+                    </th>
+                    <th className="px-3 py-2.5 text-center">
+                      <SortBtn col="diasRestantes" label="Días Restantes" />
+                    </th>
+                    <th className="px-3 py-2.5 text-right">
+                      <SortBtn col="saldo" label="Saldo USD" />
+                    </th>
                   </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {clientesOrdenados.map((c, i) => {
+                    const saldo = Number(c.saldo_pendiente)
+                    const dias = c.diasSinPago ?? 0
+                    const riesgo = riesgoCliente(dias)
+                    const barPct = Math.min((saldo / maxSaldo) * 100, 100)
 
-        {/* Footer resumen */}
-        <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-          <span className="text-[10px] text-slate-400">{clientesConDeuda.length} cliente{clientesConDeuda.length !== 1 ? 's' : ''} con deuda activa</span>
-          <span className="text-xs font-black text-red-600">
-            Total: ${Number(kpis.totalDeuda).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </span>
-        </div>
-      </div>
+                    return (
+                      <tr key={c.id} className={`border-b border-slate-50 hover:bg-slate-50/60 transition-colors ${i % 2 === 0 ? '' : 'bg-slate-50/20'}`}>
+                        {/* Cliente */}
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="font-bold text-slate-800 leading-tight">{c.nombre}</p>
+                            {c.cargosActivos && c.cargosActivos.some(car => car.metodo_pago === 'cod') && (
+                              <span className="bg-blue-100 text-blue-800 text-[8px] font-black px-1.5 py-0.5 rounded border border-blue-200 shrink-0">
+                                COD
+                              </span>
+                            )}
+                          </div>
+                          {c.rif_cedula && <p className="text-[10px] text-slate-400 font-mono mt-0.5">{c.rif_cedula}</p>}
+                          {/* Mini barra de saldo relativo */}
+                          <div className="mt-1.5 h-1 rounded-full bg-slate-100 w-24 overflow-hidden">
+                            <div className="h-full rounded-full" style={{ width: `${barPct}%`, background: riesgo.bar }} />
+                          </div>
+                        </td>
+                        {/* Vendedor */}
+                        <td className="px-3 py-3">
+                          {c.vendedor ? (
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: c.vendedor.color || '#64748b' }} />
+                              <span className="text-slate-600 font-medium">{c.vendedor.nombre}</span>
+                            </span>
+                          ) : <span className="text-slate-300">—</span>}
+                        </td>
+                        {/* Riesgo badge */}
+                        <td className="px-3 py-3 text-center">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${riesgo.bg} ${riesgo.text}`}>
+                            {riesgo.label}
+                          </span>
+                        </td>
+                        {/* Antigüedad */}
+                        <td className="px-3 py-3 text-center">
+                          <span className={`font-black text-sm ${dias > 60 ? 'text-red-600' : dias > 30 ? 'text-amber-600' : 'text-slate-600'}`}>
+                            {dias}d
+                          </span>
+                        </td>
+                        {/* Días Restantes */}
+                        <td className="px-3 py-3 text-center">
+                          {c.diasRestantes === null ? (
+                            <span className="text-slate-300">—</span>
+                          ) : c.diasRestantes < 0 ? (
+                            <span className="inline-flex px-2 py-1 rounded-full text-[10px] font-black bg-red-100 text-red-700">
+                              Vencido ({Math.abs(c.diasRestantes)}d)
+                            </span>
+                          ) : c.diasRestantes === 0 ? (
+                            <span className="inline-flex px-2 py-1 rounded-full text-[10px] font-black bg-amber-100 text-amber-700">
+                              Vence hoy
+                            </span>
+                          ) : (
+                            <span className="inline-flex px-2 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700">
+                              {c.diasRestantes}d restantes
+                            </span>
+                          )}
+                        </td>
+                        {/* Saldo */}
+                        <td className="px-3 py-3 text-right">
+                          <span className="font-black text-red-600 text-sm">
+                            {fmtUsd(saldo)}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
 
-      {/* Tabla de Abonos Recientes */}
-      {abonos && abonos.length > 0 && (
-        <div className="bg-white rounded-xl sm:rounded-2xl border border-slate-200 overflow-hidden shadow-sm mt-4">
+            {/* Footer resumen */}
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+              <span className="text-[10px] text-slate-400">{clientesConDeuda.length} cliente{clientesConDeuda.length !== 1 ? 's' : ''} con deuda activa</span>
+              <span className="text-xs font-black text-red-600">
+                Total por cobrar: {fmtUsd(totalCxC)}
+              </span>
+            </div>
+          </div>
+
+          {/* Tabla de Abonos Recientes */}
+          {abonos && abonos.length > 0 && (
+            <div className="bg-white rounded-xl sm:rounded-2xl border border-slate-200 overflow-hidden shadow-sm mt-4">
+              <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <DollarSign size={14} className="text-emerald-500" />
+                  <h3 className="text-xs sm:text-sm font-black text-slate-800">Historial de Cobranza (Abonos Recientes)</h3>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[10px] font-bold">{abonos.length}</span>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-[10px] text-slate-400 uppercase bg-slate-50 border-b border-slate-100">
+                      <th className="px-4 py-2.5 text-left font-semibold">Fecha</th>
+                      <th className="px-3 py-2.5 text-left font-semibold">Cliente</th>
+                      <th className="px-3 py-2.5 text-center font-semibold">Método</th>
+                      <th className="px-3 py-2.5 text-left font-semibold">Ref / Descripción</th>
+                      <th className="px-3 py-2.5 text-center font-semibold">Despacho</th>
+                      <th className="px-4 py-2.5 text-right font-semibold">Monto</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {abonos.map((a) => {
+                      const numDes = a.despacho?.numero 
+                        ? `DES-${String(a.despacho.numero).padStart(5, '0')}` 
+                        : (a.despacho?.cotizacion?.numero 
+                            ? `COT-${String(a.despacho.cotizacion.numero).padStart(5, '0')}` 
+                            : '—')
+
+                      return (
+                        <tr key={a.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                          <td className="px-4 py-2.5 text-slate-500 font-medium">
+                            {new Date(a.creado_en).toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                          <td className="px-3 py-2.5 font-bold text-slate-700">
+                            {a.cliente?.nombre || 'Desconocido'}
+                          </td>
+                          <td className="px-3 py-2.5 text-center font-semibold text-slate-600">
+                            {a.metodo_pago || a.forma_pago_abono || '—'}
+                          </td>
+                          <td className="px-3 py-2.5 text-slate-500 italic max-w-xs truncate" title={a.descripcion}>
+                            {a.referencia ? `Ref: ${a.referencia} · ` : ''}{a.descripcion || 'Sin descripción'}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            {numDes !== '—' ? (
+                              <span className="inline-block px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded font-mono font-bold text-[10px]">
+                                {numDes}
+                              </span>
+                            ) : (
+                              <span className="text-slate-300">—</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-black text-emerald-600 text-sm">
+                            +{fmtUsd(a.monto_usd)}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        /* Tabla de Proveedores con Cuentas por Pagar (CxP) */
+        <div className="bg-white rounded-xl sm:rounded-2xl border border-slate-200 overflow-hidden shadow-sm animate-in fade-in duration-200">
           <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <DollarSign size={14} className="text-emerald-500" />
-              <h3 className="text-xs sm:text-sm font-black text-slate-800">Historial de Cobranza (Abonos Recientes)</h3>
-              <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[10px] font-bold">{abonos.length}</span>
+              <Briefcase size={14} className="text-purple-500" />
+              <h3 className="text-xs sm:text-sm font-black text-slate-800">Proveedores con saldo pendiente (CxP)</h3>
+              <span className="px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 text-[10px] font-bold">{proveedoresConDeuda.length}</span>
             </div>
           </div>
 
@@ -2433,47 +2943,41 @@ function TabCredito() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-[10px] text-slate-400 uppercase bg-slate-50 border-b border-slate-100">
-                  <th className="px-4 py-2.5 text-left font-semibold">Fecha</th>
-                  <th className="px-3 py-2.5 text-left font-semibold">Cliente</th>
-                  <th className="px-3 py-2.5 text-center font-semibold">Método</th>
-                  <th className="px-3 py-2.5 text-left font-semibold">Ref / Descripción</th>
-                  <th className="px-3 py-2.5 text-center font-semibold">Despacho</th>
-                  <th className="px-4 py-2.5 text-right font-semibold">Monto</th>
+                  <th className="px-4 py-2.5 text-left font-semibold">Proveedor</th>
+                  <th className="px-3 py-2.5 text-left font-semibold">Tipo</th>
+                  <th className="px-3 py-2.5 text-left font-semibold">Contacto</th>
+                  <th className="px-3 py-2.5 text-left font-semibold">Ubicación</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">Saldo USD (CxP)</th>
                 </tr>
               </thead>
               <tbody>
-                {abonos.map((a) => {
-                  const numDes = a.despacho?.numero 
-                    ? `DES-${String(a.despacho.numero).padStart(5, '0')}` 
-                    : (a.despacho?.cotizacion?.numero 
-                        ? `COT-${String(a.despacho.cotizacion.numero).padStart(5, '0')}` 
-                        : '—')
-
+                {proveedoresOrdenados.map((p, i) => {
+                  const saldo = Number(p.saldo_pendiente)
                   return (
-                    <tr key={a.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                      <td className="px-4 py-2.5 text-slate-500 font-medium">
-                        {new Date(a.creado_en).toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    <tr key={p.id} className={`border-b border-slate-50 hover:bg-slate-50/60 transition-colors ${i % 2 === 0 ? '' : 'bg-slate-50/20'}`}>
+                      {/* Proveedor */}
+                      <td className="px-4 py-3 font-bold text-slate-800">
+                        <p>{p.nombre}</p>
+                        {p.rif_cedula && <p className="text-[10px] text-slate-400 font-mono mt-0.5">{p.rif_cedula}</p>}
                       </td>
-                      <td className="px-3 py-2.5 font-bold text-slate-700">
-                        {a.cliente?.nombre || 'Desconocido'}
+                      {/* Tipo */}
+                      <td className="px-3 py-3 capitalize text-slate-600 font-medium">
+                        {p.tipo_proveedor}
                       </td>
-                      <td className="px-3 py-2.5 text-center font-semibold text-slate-600">
-                        {a.metodo_pago || a.forma_pago_abono || '—'}
+                      {/* Contacto */}
+                      <td className="px-3 py-3 text-slate-500">
+                        {p.telefono && <p>{p.telefono}</p>}
+                        {p.email && <p className="text-[10px]">{p.email}</p>}
                       </td>
-                      <td className="px-3 py-2.5 text-slate-500 italic max-w-xs truncate" title={a.descripcion}>
-                        {a.referencia ? `Ref: ${a.referencia} · ` : ''}{a.descripcion || 'Sin descripción'}
+                      {/* Ubicación */}
+                      <td className="px-3 py-3 text-slate-500">
+                        {p.ciudad ? `${p.ciudad}, ${p.estado}` : '—'}
                       </td>
-                      <td className="px-3 py-2.5 text-center">
-                        {numDes !== '—' ? (
-                          <span className="inline-block px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded font-mono font-bold text-[10px]">
-                            {numDes}
-                          </span>
-                        ) : (
-                          <span className="text-slate-300">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-black text-emerald-600 text-sm">
-                        +${Number(a.monto_usd).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {/* Saldo */}
+                      <td className="px-4 py-3 text-right">
+                        <span className="font-black text-purple-600 text-sm">
+                          {fmtUsd(saldo)}
+                        </span>
                       </td>
                     </tr>
                   )
@@ -2481,8 +2985,275 @@ function TabCredito() {
               </tbody>
             </table>
           </div>
+
+          {/* Footer resumen */}
+          <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+            <span className="text-[10px] text-slate-400">{proveedoresConDeuda.length} proveedor{proveedoresConDeuda.length !== 1 ? 'es' : ''} con saldo pendiente</span>
+            <span className="text-xs font-black text-purple-600">
+              Total por pagar: {fmtUsd(totalCxP)}
+            </span>
+          </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Tab Artículos Externos ──────────────────────────────────────────────────
+function TabArticulosExternos({ configNeg }) {
+  const [rango, setRango] = useState(() => {
+    const actual = getDayRange(0)
+    const anterior = getDayRange(-1)
+    return { from: actual.from, to: actual.to, prevFrom: anterior.from, prevTo: anterior.to }
+  })
+  const [exportando, setExportando] = useState(false)
+  const [filtroAsesor, setFiltroAsesor] = useState('')
+  const [busqueda, setBusqueda] = useState('')
+
+  const { data: items = [], isLoading, isError, refetch } = useReporteExternos({
+    from: rango.from,
+    to: rango.to
+  })
+
+  const asesores = useMemo(() => {
+    const map = {}
+    items.forEach(item => {
+      if (item.asesor_nombre) {
+        map[item.asesor_nombre] = { nombre: item.asesor_nombre, color: item.asesor_color }
+      }
+    })
+    return Object.values(map).sort((a, b) => a.nombre.localeCompare(b.nombre))
+  }, [items])
+
+  const itemsFiltrados = useMemo(() => {
+    return items.filter(item => {
+      const matchAsesor = !filtroAsesor || item.asesor_nombre === filtroAsesor
+      
+      const q = removeAccents(busqueda.toLowerCase().trim())
+      const matchBusqueda = !q ||
+        removeAccents(item.articulo_nombre || '').toLowerCase().includes(q) ||
+        removeAccents(item.articulo_codigo || '').toLowerCase().includes(q) ||
+        removeAccents(item.cliente_nombre || '').toLowerCase().includes(q) ||
+        removeAccents(item.cliente_rif || '').toLowerCase().includes(q) ||
+        String(item.despacho_numero || '').includes(q)
+      
+      return matchAsesor && matchBusqueda
+    })
+  }, [items, filtroAsesor, busqueda])
+
+  const kpis = useMemo(() => {
+    const totalVentas = itemsFiltrados.reduce((sum, item) => sum + Number(item.total_usd || 0), 0)
+    const cantidadTotal = itemsFiltrados.reduce((sum, item) => sum + Number(item.cantidad || 0), 0)
+    const pedidosUnicos = new Set(itemsFiltrados.map(item => item.despacho_id)).size
+    const clientesUnicos = new Set(itemsFiltrados.map(item => item.cliente_rif)).size
+
+    return {
+      totalVentas,
+      cantidadTotal,
+      pedidosUnicos,
+      clientesUnicos
+    }
+  }, [itemsFiltrados])
+
+  const exportarPDF = async (accion = 'descargar') => {
+    if (!itemsFiltrados.length) return
+    setExportando(true)
+    try {
+      const { generarArticulosExternosPDF } = await import('../services/pdf/articulosExternosPDF')
+      await generarArticulosExternosPDF({
+        items: itemsFiltrados,
+        rango,
+        kpis,
+        config: configNeg,
+        action: accion === 'imprimir' ? 'print' : 'download'
+      })
+    } catch (e) {
+      console.error('Error generando PDF de artículos externos:', e)
+    } finally {
+      setExportando(false)
+    }
+  }
+
+  const rangoLabel = `${new Date(`${rango.from}T00:00:00`).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })} - ${new Date(`${rango.to}T00:00:00`).toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })}`
+
+  if (isLoading) return <SkeletonReporte />
+  if (isError) return <ErrorMsg onRetry={refetch} />
+
+  return (
+    <div className="space-y-4">
+      {/* Filtros */}
+      <div className="bg-white px-4 py-3 rounded-2xl border border-slate-200 shadow-sm">
+        <div className="flex flex-col gap-3.5">
+          {/* Fila Superior: Periodo (con mucho espacio) */}
+          <div className="w-full">
+            <div className="flex items-center gap-2 ml-1 mb-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Periodo</label>
+              <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-full px-2 py-0.5">
+                {rangoLabel}
+              </span>
+            </div>
+            <DateRangeSelector value={rango} onChange={setRango} />
+          </div>
+
+          {/* Fila Inferior: Otros Filtros y Acciones */}
+          <div className="flex flex-wrap items-end gap-3 border-t border-slate-50 pt-3 w-full justify-between">
+            {/* Grupo de Filtros */}
+            <div className="flex flex-wrap items-end gap-3">
+              {/* Selector de Asesor */}
+              <div className="w-52">
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1 mb-1 block tracking-wider">Asesor (Vendedor)</label>
+                <select
+                  value={filtroAsesor}
+                  onChange={e => setFiltroAsesor(e.target.value)}
+                  className="w-full h-9 px-3 rounded-xl border border-slate-200 text-xs font-bold focus:ring-4 focus:ring-indigo-500/10 outline-none bg-slate-50/50 appearance-none cursor-pointer hover:border-indigo-300 transition-all"
+                >
+                  <option value="">Todos los asesores</option>
+                  {asesores.map(a => (
+                    <option key={a.nombre} value={a.nombre}>
+                      {a.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Búsqueda */}
+              <div className="w-60">
+                <label className="text-[10px] font-black text-slate-400 uppercase ml-1 mb-1 block tracking-wider">Buscar</label>
+                <input
+                  type="text"
+                  placeholder="Buscar por artículo o cliente..."
+                  value={busqueda}
+                  onChange={e => setBusqueda(e.target.value)}
+                  className="w-full h-9 px-3 rounded-xl border border-slate-200 text-xs font-bold focus:ring-4 focus:ring-indigo-500/10 outline-none bg-slate-50/50 hover:border-indigo-300 transition-all placeholder:text-slate-400"
+                />
+              </div>
+            </div>
+
+            {/* Grupo de Acciones */}
+            <div className="flex items-center gap-1.5 ml-auto shrink-0 self-end">
+              <button
+                onClick={() => exportarPDF('imprimir')}
+                disabled={exportando || !itemsFiltrados.length}
+                className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 sm:px-3.5 rounded-xl border border-slate-200 text-slate-700 bg-white hover:bg-slate-50 transition-all active:scale-[0.98] disabled:opacity-50 shadow-sm h-9"
+              >
+                <Printer size={12} className="text-slate-500" />
+                <span className="hidden sm:inline">{exportando ? 'Generando...' : 'Imprimir PDF'}</span>
+              </button>
+
+              <button
+                onClick={() => exportarPDF('descargar')}
+                disabled={exportando || !itemsFiltrados.length}
+                className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 sm:px-3.5 rounded-xl text-white transition-all active:scale-[0.98] disabled:opacity-50 shadow-md h-9"
+                style={{ background: 'linear-gradient(135deg, #1B365D, #0d1f3c)' }}
+              >
+                <Download size={12} />
+                <span className="hidden sm:inline">{exportando ? 'Generando...' : 'Descargar PDF'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <KpiCard
+          icon={DollarSign}
+          label="Total Ventas Externas"
+          value={fmtUsd(kpis.totalVentas)}
+          gradient="linear-gradient(135deg, #1B365D, #0d1f3c)"
+          border="rgba(255,255,255,0.05)"
+        />
+        <KpiCard
+          icon={Briefcase}
+          label="Cant. Total Vendida"
+          value={Number(kpis.cantidadTotal).toFixed(0)}
+          sub="Unidades vendidas"
+          gradient="linear-gradient(135deg, #1e293b, #0f172a)"
+          border="rgba(255,255,255,0.05)"
+        />
+        <KpiCard
+          icon={FileText}
+          label="Pedidos Afectados"
+          value={String(kpis.pedidosUnicos)}
+          sub="Despachos únicos"
+          gradient="linear-gradient(135deg, #0369a1, #0c4a6e)"
+          border="rgba(255,255,255,0.05)"
+        />
+        <KpiCard
+          icon={Users}
+          label="Clientes Compradores"
+          value={String(kpis.clientesUnicos)}
+          sub="Clientes distintos"
+          gradient="linear-gradient(135deg, #0d5c3a, #064026)"
+          border="rgba(255,255,255,0.05)"
+        />
+      </div>
+
+      {/* Tabla */}
+      <div className="bg-white rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-200">
+                <th className="px-4 py-3 text-[10px] font-black text-slate-500 uppercase tracking-wider">Fecha</th>
+                <th className="px-4 py-3 text-[10px] font-black text-slate-500 uppercase tracking-wider">Despacho</th>
+                <th className="px-4 py-3 text-[10px] font-black text-slate-500 uppercase tracking-wider">Código</th>
+                <th className="px-4 py-3 text-[10px] font-black text-slate-500 uppercase tracking-wider">Artículo</th>
+                <th className="px-4 py-3 text-right text-[10px] font-black text-slate-500 uppercase tracking-wider">Cant.</th>
+                <th className="px-4 py-3 text-right text-[10px] font-black text-slate-500 uppercase tracking-wider">P. Unit. ($)</th>
+                <th className="px-4 py-3 text-right text-[10px] font-black text-slate-500 uppercase tracking-wider">Total ($)</th>
+                <th className="px-4 py-3 text-[10px] font-black text-slate-500 uppercase tracking-wider">Cliente</th>
+                <th className="px-4 py-3 text-[10px] font-black text-slate-500 uppercase tracking-wider">Asesor</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-xs">
+              {itemsFiltrados.length === 0 ? (
+                <tr>
+                  <td colSpan="9" className="px-4 py-8 text-center text-slate-400 font-medium">
+                    No se encontraron artículos externos vendidos en el periodo seleccionado.
+                  </td>
+                </tr>
+              ) : (
+                itemsFiltrados.map((item, idx) => (
+                  <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
+                    <td className="px-4 py-3 whitespace-nowrap text-slate-600 font-semibold">
+                      {new Date(item.fecha).toLocaleDateString('es-VE')}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap font-bold text-slate-900">
+                      #{item.despacho_numero}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-slate-500 font-medium">
+                      {item.articulo_codigo || '—'}
+                    </td>
+                    <td className="px-4 py-3 text-slate-700 font-semibold">
+                      {item.articulo_nombre}
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-600">
+                      {Number(item.cantidad || 0) % 1 === 0 ? Number(item.cantidad || 0).toFixed(0) : Number(item.cantidad || 0).toFixed(2)}
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-slate-500">
+                      {fmtUsd(item.precio_unit_usd)}
+                    </td>
+                    <td className="px-4 py-3 text-right font-bold text-slate-950">
+                      {fmtUsd(item.total_usd)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-semibold text-slate-800">{item.cliente_nombre}</div>
+                      <div className="text-[10px] text-slate-400 font-bold">{item.cliente_rif}</div>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: item.asesor_color }} />
+                        <span className="font-bold text-slate-700">{item.asesor_nombre}</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   )
 }
@@ -2544,6 +3315,7 @@ export default function ReportesView() {
       {activeTab === 'comisiones' && <TabComisiones configNeg={configNeg} />}
       {activeTab === 'credito' && <TabCredito />}
       {activeTab === 'ventas' && <TabVentas configNeg={configNeg} />}
+      {activeTab === 'externos' && <TabArticulosExternos configNeg={configNeg} />}
     </div>
   )
 }

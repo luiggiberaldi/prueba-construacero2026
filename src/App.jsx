@@ -9,8 +9,9 @@ import {
   Navigate,
   Outlet,
 } from 'react-router-dom'
-import { QueryClientProvider } from '@tanstack/react-query'
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import queryClient from './lib/queryClient'
+import { indexedDbPersister, CACHE_BUSTER } from './lib/queryPersister'
 import OfflineBanner from './components/ui/OfflineBanner'
 import useAuthStore from './store/useAuthStore'
 import { ToastProvider } from './components/ui/Toast'
@@ -22,9 +23,27 @@ import AppLayout from './components/layout/AppLayout'
 // Auth (se carga siempre en /login)
 import LoginPage from './modules/auth/LoginPage'
 
-// Views — importadas estáticamente para asegurar soporte 100% offline sin fallos de pre-carga
+// ─── Lazy import con retry automático para chunks obsoletos ──────────────────
+function lazyRetry(importFn) {
+  return lazy(() =>
+    importFn().catch((err) => {
+      // Si falla la carga de un módulo dinámico (chunks viejos tras un deploy),
+      // recargar la página una sola vez para obtener los chunks nuevos
+      const key = 'lazy_retry_reload'
+      const lastReload = sessionStorage.getItem(key)
+      const now = Date.now()
+      if (!lastReload || now - Number(lastReload) > 10000) {
+        sessionStorage.setItem(key, String(now))
+        window.location.reload()
+      }
+      throw err
+    })
+  )
+}
+
 import DashboardView from './views/DashboardView'
 import ClientesView from './views/ClientesView'
+import PersonalView from './views/PersonalView'
 import CotizacionesView from './views/CotizacionesView'
 import DespachosView from './views/DespachosView'
 import VentaRapidaView from './views/VentaRapidaView'
@@ -35,12 +54,14 @@ import AuditoriaView from './views/AuditoriaView'
 import ConfiguracionView from './views/ConfiguracionView'
 import ComisionesView from './views/ComisionesView'
 import ReportesView from './views/ReportesView'
+import ProveedoresView from './views/ProveedoresView'
 import LogsView from './views/LogsView'
 import ReporteVendedoresView from './views/ReporteVendedoresView'
 import OrdenCompraView from './views/OrdenCompraView'
 import SeguimientoOperativoView from './views/SeguimientoOperativoView'
 import TesterView from './views/TesterView'
 import TesterFlowView from './views/TesterFlowView'
+import TutorialView from './views/TutorialView'
 
 // ─── QueryClient — importado desde lib/queryClient.js ────────────────────────
 
@@ -57,7 +78,7 @@ function PantallaCarga() {
     <div className="min-h-screen flex items-center justify-center"
       style={{ background: 'linear-gradient(135deg, #0a1628 0%, #0d1f3c 40%, #0a1a0f 100%)' }}>
       <div className="flex flex-col items-center gap-6">
-        <img src="/logo.png" alt="Construacero Carabobo" className="h-32 md:h-48 w-auto object-contain opacity-90 drop-shadow-2xl" />
+        <img src="/logo.png" alt="Listo POS" className="h-32 md:h-48 w-auto object-contain opacity-90 drop-shadow-2xl" />
         <div className="loader">
           <div className="loader-square" />
           <div className="loader-square" />
@@ -200,6 +221,20 @@ function RutaExcluyeAdmin() {
   return <Outlet />
 }
 
+// ─── Ruta exclusiva de vendedores ─────────────────────────────────────────────
+function RutaSoloVendedor() {
+  const hasUser = useAuthStore(useCallback(s => !!s.user, []))
+  const perfil = useAuthStore(useCallback(s => s.perfil, []))
+  const initialized = useAuthStore(useCallback(s => s.initialized, []))
+  const cargandoPerfil = useAuthStore(useCallback(s => s._cargandoPerfil, []))
+
+  if (!initialized) return <PantallaCarga />
+  if (!perfil && hasUser && cargandoPerfil) return <PantallaCarga />
+  if (!perfil) return <Navigate to="/login" replace />
+  if (perfil.rol !== 'vendedor' && perfil.rol !== 'vendedor_sin_comision') return <Navigate to="/" replace />
+  return <Outlet />
+}
+
 // ─── App raíz ─────────────────────────────────────────────────────────────────
 function AppRoutes() {
   const initialize = useAuthStore((s) => s.initialize)
@@ -249,15 +284,21 @@ function AppRoutes() {
             <Route path="/cotizaciones"   element={<CotizacionesView />} />
             <Route path="/venta-rapida"   element={<VentaRapidaView />} />
             <Route path="/comisiones"    element={<ComisionesView />} />
+            
+            <Route element={<RutaSoloVendedor />}>
+              <Route path="/tutorial"      element={<TutorialView />} />
+            </Route>
 
             {/* Transportistas: excluye admin y logistica */}
             <Route element={<RutaExcluyeAdmin />}>
               <Route path="/transportistas" element={<TransportistasView />} />
             </Route>
 
-            {/* Reportes: solo administracion y desarrollador */}
+            {/* Reportes y Personal: solo administracion, jefe y desarrollador */}
             <Route element={<RutaSoloAdmin />}>
+              <Route path="/personal"      element={<PersonalView />} />
               <Route path="/reportes"      element={<ReportesView />} />
+              <Route path="/proveedores"   element={<ProveedoresView />} />
             </Route>
 
             {/* Configuración y Seguimiento Operativo: supervisor y administracion */}
@@ -295,7 +336,16 @@ function AppRoutes() {
 export default function App() {
   return (
     <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={{
+          persister: indexedDbPersister,
+          maxAge: 1000 * 60 * 60 * 24,            // 24h — coincide con gcTime
+          buster: CACHE_BUSTER,                   // git hash → invalida en cada deploy
+          dehydrateOptions: {
+            shouldDehydrateQuery: (q) => q.state.status === 'success',
+          },
+        }}>
         <BrowserRouter unstable_useTransitions={false}>
           <ToastProvider>
             <OfflineBanner>
@@ -303,7 +353,7 @@ export default function App() {
             </OfflineBanner>
           </ToastProvider>
         </BrowserRouter>
-      </QueryClientProvider>
+      </PersistQueryClientProvider>
     </ErrorBoundary>
   )
 }

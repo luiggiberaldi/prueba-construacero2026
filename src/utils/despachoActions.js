@@ -15,6 +15,14 @@ export const ACCIONES = {
       confirmText: 'Sí, aprobar',
       variant: 'success',
     },
+    jefe: {
+      label: 'Aprobar despacho',
+      confirmTitle: '¿Aprobar este despacho?',
+      confirmMessage: 'Se calculará la comisión del vendedor.',
+      confirmDetails: 'El despacho pasará a estar listo para entrega.',
+      confirmText: 'Sí, aprobar',
+      variant: 'success',
+    },
     administracion: {
       label: 'Aprobar despacho',
       confirmTitle: '¿Aprobar este despacho?',

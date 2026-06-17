@@ -80,3 +80,8 @@ export function json(data, status = 200, request = null) {
 export function jsonError(message, status = 400, request = null) {
   return json({ error: message }, status, request);
 }
+
+export function removeAccents(str) {
+  if (!str) return '';
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}

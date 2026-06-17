@@ -1,21 +1,17 @@
 // src/services/pdf/pipelinePDF.js
-// Genera PDF profesional de Reporte de Pipeline de Cotizaciones — formato Construacero Carabobo
+// Genera PDF profesional de Reporte de Pipeline de Cotizaciones — formato Listo POS
 import { jsPDF } from 'jspdf'
 import { cargarLogo } from './pdfLogo'
 import { WATERMARK_LOGO } from './watermarkBase64'
 import {
   PAGE_W, PAGE_H, MARGIN, CONTENT_W,
   C_PRIMARY, C_DARK, C_WHITE, C_EMERALD, C_AMBER, C_RED, C_GRAY,
-  drawPremiumHeader
+  drawPremiumHeader, fmtFechaCorta
 } from './pdfShared'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function fmtUsd(n) {
   return `$${Number(n || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
-function fmtFechaCorta(f) {
-  if (!f) return '—'
-  return new Date(f).toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: '2-digit' })
 }
 
 function hexToRgb(hex) {
@@ -315,8 +311,8 @@ export async function generarPipelinePDF({ reporte, rango, config = {} }) {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(6)
     doc.setTextColor(...C_GRAY)
-    let footName = config.nombre_negocio || 'Construacero Carabobo C.A.'
-    if (footName.trim().toUpperCase() === 'PRUEBA' || footName.trim() === '') footName = 'Construacero Carabobo C.A.'
+    let footName = config.nombre_negocio || 'Listo POS C.A.'
+    if (footName.trim().toUpperCase() === 'PRUEBA' || footName.trim() === '') footName = 'Listo POS C.A.'
     doc.text(footName, MARGIN, PAGE_H - 10)
     doc.text(`Generado: ${new Date().toLocaleString('es-VE')}`, MARGIN, PAGE_H - 6)
     doc.text(`Página ${p} de ${totalPages}`, PAGE_W - MARGIN, PAGE_H - 10, { align: 'right' })

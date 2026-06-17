@@ -1,5 +1,5 @@
 // src/services/pdf/inventarioPDF.js
-// Genera PDF profesional de Reporte de Inventario Valorizado — formato Construacero Carabobo
+// Genera PDF profesional de Reporte de Inventario Valorizado — formato Listo POS
 import { jsPDF } from 'jspdf'
 import { cargarLogo } from './pdfLogo'
 import { WATERMARK_LOGO } from './watermarkBase64'

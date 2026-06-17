@@ -5,6 +5,7 @@ import supabase from '../services/supabase/client'
 import { apiUrl, getAuthHeaders } from '../services/apiBase'
 import useAuthStore from '../store/useAuthStore'
 import { showToast } from '../components/ui/Toast'
+import { broadcastEntidad } from '../services/supabase/realtimeBus'
 
 export const COMISIONES_KEY = ['comisiones']
 
@@ -17,13 +18,14 @@ export function useComisiones({
   desde = '', 
   hasta = '',
   page = 1,
-  pageSize = 100
+  pageSize = 100,
+  vista = ''
 } = {}) {
   const perfil = useAuthStore(s => s.perfil)
   const esAdmin = perfil?.rol === 'administracion'
 
   return useQuery({
-    queryKey: [...COMISIONES_KEY, 'lista', perfil?.id, estado, vendedorId, esAdmin, desde, hasta, page, pageSize],
+    queryKey: [...COMISIONES_KEY, 'lista', perfil?.id, estado, vendedorId, esAdmin, desde, hasta, page, pageSize, vista],
     queryFn: async () => {
       if (!perfil?.id) {
         throw new Error('Perfil de operador no disponible para cargar lista de comisiones')
@@ -38,6 +40,7 @@ export function useComisiones({
         if (estado) params.set('estado', estado)
         if (desde) params.set('desde', desde)
         if (hasta) params.set('hasta', hasta)
+        if (vista) params.set('vista', vista)
         
         // Paginación
         params.set('page', page.toString())
@@ -62,9 +65,12 @@ export function useComisiones({
         console.log('[useComisiones] PRIMER ITEM RAW:', JSON.stringify(items?.[0] ?? null))
         // ───────────────────────────────────────────────────────────────
         
-        return {
-          ...(data ?? { total: 0, page, pageSize, totalPages: 0 }),
-          data: (data?.data ?? []).map(c => ({
+        const mappedItems = items.map(c => {
+          if (c.comisiones && c.monto !== undefined) {
+            // Si es un objeto de tipo evento de liberación
+            return c
+          }
+          return {
             id: c.id,
             despachoid: c.despachoid,
             vendedorid: c.vendedorid,
@@ -76,6 +82,8 @@ export function useComisiones({
             pctcabilla: Number(c.pctcabilla || 0),
             pctotros: Number(c.pctotros || 0),
             montopagado: Number(c.montopagado || 0),
+            comision_liberada: Number(c.comision_liberada || 0),
+            comision_retenida: Number(c.comision_retenida || 0),
             estado: c.estado,
             pagadaen: c.pagadaen,
             pagadapor: c.pagadapor,
@@ -83,7 +91,12 @@ export function useComisiones({
             vendedor: c.vendedor,
             despacho: c.despacho,
             cotizacion: c.cotizacion,
-          })),
+          }
+        })
+
+        return {
+          ...(data ?? { total: 0, page, pageSize, totalPages: 0 }),
+          data: mappedItems,
         }
       } catch (e) {
         console.error('Error useComisiones:', e.message)
@@ -181,6 +194,7 @@ export function useMarcarComisionPagada() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: COMISIONES_KEY })
+      broadcastEntidad('comisiones')
       showToast('Comisión procesada correctamente', 'success')
     },
   })

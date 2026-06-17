@@ -3,7 +3,7 @@
 // + Title parpadeante cuando el tab no está enfocado
 // + navigator.setAppBadge() para PWA instalada
 
-const ORIGINAL_TITLE = 'Construacero Carabobo'
+const ORIGINAL_TITLE = 'Listo POS'
 let _originalFavicon = null
 let _canvas = null
 let _blinkInterval = null

@@ -8,9 +8,10 @@ import { buscarClientes } from '../../utils/clienteSearch'
 const TIPO_COLORS = {
   natural:  'bg-slate-100 text-slate-600',
   juridico: 'bg-violet-100 text-violet-700',
+  personal: 'bg-indigo-100 text-indigo-700',
 }
 const TIPO_LABELS_SHORT = {
-  natural: 'Natural', juridico: 'Jurídico',
+  natural: 'Natural', juridico: 'Jurídico', personal: 'Personal',
 }
 
 export default function ClienteSelector({ clientes, clienteId, onSelect }) {

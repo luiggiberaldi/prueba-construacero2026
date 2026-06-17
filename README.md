@@ -1,6 +1,6 @@
-# Construacero Carabobo
+# Listo POS
 
-Sistema de cotizaciones comerciales para ferretería. Permite a los vendedores registrar clientes, construir cotizaciones con el inventario disponible y generar PDFs profesionales para compartir por WhatsApp.
+Sistema de cotizaciones comerciales y facturación. Permite a los vendedores registrar clientes, construir cotizaciones con el inventario disponible y generar PDFs profesionales para compartir por WhatsApp.
 
 ## Stack
 
@@ -54,7 +54,7 @@ La aplicación usa una arquitectura de dos capas:
 | Capa | Servicio | URL |
 |------|----------|-----|
 | **Frontend** | Vercel | `https://listo-pos-cotizaciones.vercel.app` |
-| **API Backend** | Cloudflare Worker | `https://listo-pos-cotizaciones.luigistorelogistics.workers.dev` |
+| **API Backend** | Cloudflare Worker | `https://listo-pos-api.luiggiberaldi94.workers.dev` |
 
 ### Cómo funciona
 
@@ -72,7 +72,7 @@ La aplicación usa una arquitectura de dos capas:
 
 > **Importante sobre `VITE_WORKER_ORIGIN`:**
 > - Si se deja **vacío o sin definir**, el frontend usa rutas relativas (`/api/...`) y Vercel las proxea al Worker automáticamente. Esta es la configuración recomendada.
-> - Si se define (ej: `https://listo-pos-cotizaciones.luigistorelogistics.workers.dev`), el frontend llama al Worker directamente (cross-origin). El Worker ya tiene CORS configurado para `*.vercel.app`.
+> - Si se define (ej: `https://listo-pos-api.luiggiberaldi94.workers.dev`), el frontend llama al Worker directamente (cross-origin). El Worker ya tiene CORS configurado para `*.vercel.app`.
 
 ### Flujo de deploy
 
@@ -89,7 +89,7 @@ wrangler deploy --dispatch-namespace chiridion
 ```json
 {
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://listo-pos-cotizaciones.luigistorelogistics.workers.dev/api/:path*" },
+    { "source": "/api/:path*", "destination": "https://listo-pos-api.luiggiberaldi94.workers.dev/api/:path*" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

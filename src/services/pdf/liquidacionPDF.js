@@ -1,11 +1,11 @@
 // src/services/pdf/liquidacionPDF.js
-// PDF profesional de Liquidación de Ventas y Comisiones — Construacero Carabobo
+// PDF profesional de Liquidación de Ventas y Comisiones — Listo POS
 // Orientación HORIZONTAL (landscape) para mostrar todos los datos sin truncar
 import { jsPDF } from 'jspdf'
 import { cargarLogo } from './pdfLogo'
 import {
   C_PRIMARY, C_DARK, C_WHITE, C_EMERALD, C_AMBER, C_GRAY,
-  fmtUsd,
+  fmtUsd, fmtFechaCorta,
   hexToRgb, drawWatermark, checkPage, drawPremiumHeader
 } from './pdfShared'
 
@@ -16,10 +16,6 @@ const L_M = 12    // margen
 const L_CW = L_W - L_M * 2  // ancho de contenido = 255 mm
 
 // ─── Helpers locales ──────────────────────────────────────────────────────────
-function fmtFechaCorta(ts) {
-  if (!ts) return '—'
-  return new Date(ts).toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: '2-digit' })
-}
 
 function parsePago(pago) {
   if (!pago) return '—'
@@ -64,8 +60,8 @@ function dibujarFooters(doc, config) {
     doc.setDrawColor(...C_PRIMARY); doc.setLineWidth(0.5)
     doc.line(L_M, L_H - 12, L_M + L_CW, L_H - 12)
     doc.setFont('helvetica', 'normal'); doc.setFontSize(6); doc.setTextColor(...C_GRAY)
-    let footName = config.nombre_negocio || 'Construacero Carabobo C.A.'
-    if (footName.trim().toUpperCase() === 'PRUEBA' || footName.trim() === '') footName = 'Construacero Carabobo C.A.'
+    let footName = config.nombre_negocio || 'Listo POS C.A.'
+    if (footName.trim().toUpperCase() === 'PRUEBA' || footName.trim() === '') footName = 'Listo POS C.A.'
     doc.text(footName, L_M, L_H - 7)
     doc.text(`Generado: ${new Date().toLocaleString('es-VE')}`, L_M, L_H - 4)
     doc.text(`Página ${p} de ${totalPages}`, L_W - L_M, L_H - 7, { align: 'right' })

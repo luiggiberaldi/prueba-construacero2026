@@ -19,14 +19,24 @@ import { handlePush } from './api/handlers/push.js'
 import { handleLogFromClient, handleGetLogs, handleGetLogStats, handleDownloadLogs, handleAnalyzeLogs, handlePurgeLogs } from './api/handlers/logs.js'
 import { handleGetAudit, handleGetAuditStats, handleAnalyzeAudit } from './api/handlers/audit.js'
 import { handleMarcarComisionPagada, handleActualizarEstadoComision, handleGetComisionesConfig, handleGetComisiones, handleGetComisionesResumen } from './api/handlers/comisiones.js'
-import { handleRegistrarAbono, handleRevertirAbono } from './api/handlers/cxc.js'
+import { handleRegistrarAbono, handleRevertirAbono, handleRegistrarSaldoFavor, handleCruzarSaldoFavor, handleRegistrarDevolucionCredito } from './api/handlers/cxc.js'
 import { handleSwitchOperator, handleClearOperator, handleGetOperators, handleSuperAdmin } from './api/handlers/auth-operators.js'
 import { handleBuscarProductosHibrido, handleSyncEmbeddings, handleParseMaterialText, handleScanMaterialList, handleAplicarMovimientoLote, handleBatchIngest, handleTransformacionInventario, handleBatchPriceUpdate, handleClearInventory, handlePdfTemp } from './api/handlers/inventario.js'
-import { handleGuardarCotizacion, handleReciclarCotizacion, handleReabrirCotizacion, handleCrearVersion, handleEnviarCotizacion, handleVentaRapida } from './api/handlers/cotizaciones.js'
-import { handleCrearDespacho, handleActualizarEstadoDespacho, handleEditarItemsDespacho, handleReciclarDespacho, handleGuardarDescuentos, handleObtenerDescuentos, handleEditarPagoDespacho } from './api/handlers/despachos.js'
+import { handleGuardarCotizacion, handleReciclarCotizacion, handleReabrirCotizacion, handleCrearVersion, handleEnviarCotizacion, handleVentaRapida, runCleanupCotizaciones } from './api/handlers/cotizaciones.js'
+import { handleCrearDespacho, handleActualizarEstadoDespacho, handleEditarItemsDespacho, handleReciclarDespacho, handleGuardarDescuentos, handleObtenerDescuentos, handleEditarPagoDespacho, handleDevolucionParcialDespacho } from './api/handlers/despachos.js'
 import { handleDevTools } from './api/handlers/dev.js'
 import { handleAdmin, handleBackup, handleRestore, handleSaveConfig, handleGetConfig, handleResetOperacional, handleTesterClearAll, handleTesterSeedDemo, handleTesterStressSeed, handleCrearTransportista, handleActualizarTransportista } from './api/handlers/admin.js'
 import { handleGetSeguimiento, handleCrearSeguimiento, handleActualizarSeguimiento, handleBorrarSeguimiento, runPurgeTrackingImages } from './api/handlers/seguimiento.js'
+import {
+  handleListarProveedores,
+  handleCheckRifProveedor,
+  handleCrearProveedor,
+  handleActualizarProveedor,
+  handleBorrarProveedor,
+  handleGetCuentasPorPagar,
+  handleRegistrarTransaccionCxP,
+  handleActualizarTransaccionCxP
+} from './api/handlers/proveedores.js'
 
 
 export default {
@@ -180,6 +190,11 @@ export default {
       return handleEditarPagoDespacho(request, env);
     }
 
+    // ── API: devolución parcial de despacho (administracion/logistica) ────
+    if (url.pathname === '/api/despachos/devolucion-parcial' && request.method === 'POST') {
+      return handleDevolucionParcialDespacho(request, env);
+    }
+
     // ── API: obtener descuentos de un despacho ────────────────────────────
     if (url.pathname.startsWith('/api/despachos/') && url.pathname.endsWith('/descuentos') && request.method === 'GET') {
       return handleObtenerDescuentos(request, env, url);
@@ -215,6 +230,32 @@ export default {
       return handleActualizarCliente(request, env);
     }
 
+    // ── API: Proveedores ───────────────────────────────────────────────────
+    if (url.pathname === '/api/proveedores' && request.method === 'GET') {
+      return handleListarProveedores(request, env);
+    }
+    if (url.pathname === '/api/proveedores/check-rif' && request.method === 'GET') {
+      return handleCheckRifProveedor(request, env);
+    }
+    if (url.pathname === '/api/proveedores' && request.method === 'POST') {
+      return handleCrearProveedor(request, env);
+    }
+    if (url.pathname === '/api/proveedores' && request.method === 'PUT') {
+      return handleActualizarProveedor(request, env);
+    }
+    if (url.pathname === '/api/proveedores' && request.method === 'DELETE') {
+      return handleBorrarProveedor(request, env);
+    }
+    if (url.pathname === '/api/cuentas-por-pagar' && request.method === 'GET') {
+      return handleGetCuentasPorPagar(request, env);
+    }
+    if (url.pathname === '/api/cuentas-por-pagar' && request.method === 'POST') {
+      return handleRegistrarTransaccionCxP(request, env);
+    }
+    if (url.pathname === '/api/cuentas-por-pagar' && request.method === 'PUT') {
+      return handleActualizarTransaccionCxP(request, env);
+    }
+
     // ── API: registrar abono CxC (bypass RLS) ──────────────────────────────
     if (url.pathname === '/api/cxc/abono' && request.method === 'POST') {
       return handleRegistrarAbono(request, env);
@@ -223,6 +264,21 @@ export default {
     // ── API: revertir abono CxC (bypass RLS) ──────────────────────────────
     if (url.pathname === '/api/cxc/revertir-abono' && request.method === 'POST') {
       return handleRevertirAbono(request, env);
+    }
+
+    // ── API: registrar saldo a favor CxC (bypass RLS) ──────────────────────
+    if (url.pathname === '/api/cxc/saldo-favor' && request.method === 'POST') {
+      return handleRegistrarSaldoFavor(request, env);
+    }
+
+    // ── API: cruzar saldo a favor CxC (bypass RLS) ─────────────────────────
+    if (url.pathname === '/api/cxc/cruzar-saldo-favor' && request.method === 'POST') {
+      return handleCruzarSaldoFavor(request, env);
+    }
+
+    // ── API: registrar devolución de crédito / saldo a favor ─────────────
+    if (url.pathname === '/api/cxc/devolucion-credito' && request.method === 'POST') {
+      return handleRegistrarDevolucionCredito(request, env);
     }
 
     // ── API: crear transportista (bypass RLS) ───────────────────────────────
@@ -454,13 +510,19 @@ export default {
 
   async scheduled(event, env, ctx) {
     ctx.waitUntil(
-      runPurgeTrackingImages(env)
-        .then(result => {
-          console.log('[CRON PURGE] Completed successfully:', result);
-        })
-        .catch(err => {
-          console.error('[CRON PURGE] Failed with error:', err);
-        })
+      Promise.allSettled([
+        runPurgeTrackingImages(env),
+        runCleanupCotizaciones(env)
+      ]).then(results => {
+        results.forEach((res, idx) => {
+          const cronName = idx === 0 ? 'PURGE_IMAGES' : 'CLEANUP_COTIZACIONES';
+          if (res.status === 'fulfilled') {
+            console.log(`[CRON ${cronName}] Completado con éxito:`, res.value);
+          } else {
+            console.error(`[CRON ${cronName}] Falló con error:`, res.reason);
+          }
+        });
+      })
     );
   },
 };

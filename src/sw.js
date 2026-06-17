@@ -275,7 +275,7 @@ self.addEventListener('push', (event) => {
   try {
     payload = event.data.json()
   } catch {
-    payload = { title: 'Construacero', body: event.data.text() }
+    payload = { title: 'Listo POS', body: event.data.text() }
   }
 
   const options = {
@@ -297,7 +297,7 @@ self.addEventListener('push', (event) => {
         console.log('[SW] Push ignorada porque la app está activa en primer plano.')
         return
       }
-      return self.registration.showNotification(payload.title || 'Construacero', options)
+      return self.registration.showNotification(payload.title || 'Listo POS', options)
     })
   )
 })

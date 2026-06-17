@@ -105,17 +105,26 @@ export async function validateOperator(request, env, { requireSupervisor = false
 
   const h = supaServiceHeaders(env);
   const rolFilter = requireSupervisor ? '&rol=in.(supervisor,jefe,logistica,administracion,desarrollador)' : '';
-  const res = await fetch(
-    `${env.SUPABASE_URL}/rest/v1/usuarios?id=eq.${user.operator_id}&activo=eq.true${rolFilter}&select=id,nombre,rol,color,cuenta_id,markup_pct,es_externo`,
-    { headers: h }
-  );
-  const [operador] = await res.json();
-  if (!operador) {
-    const msg = requireSupervisor
-      ? 'Solo supervisores, logística o administración pueden realizar esta acción'
-      : 'Operador no encontrado o inactivo';
-    return { error: jsonError(msg, 403, request) };
-  }
+  try {
+    const res = await fetch(
+      `${env.SUPABASE_URL}/rest/v1/usuarios?id=eq.${user.operator_id}&activo=eq.true${rolFilter}&select=id,nombre,rol,color,cuenta_id,markup_pct,es_externo`,
+      { headers: h }
+    );
+    if (!res.ok) {
+      const errText = await res.text();
+      return { error: jsonError(`Error de conexion con Supabase (HTTP ${res.status}): ${errText}`, res.status || 500, request) };
+    }
+    const rows = await res.json();
+    const operador = rows[0];
+    if (!operador) {
+      const msg = requireSupervisor
+        ? 'Solo supervisores, logistica o administracion pueden realizar esta acción'
+        : 'Operador no encontrado o inactivo';
+      return { error: jsonError(msg, 403, request) };
+    }
 
-  return { user, operador, headers: h, ip };
+    return { user, operador, headers: h, ip };
+  } catch (err) {
+    return { error: jsonError(`Error critico al validar operador: ${err.message}`, 500, request) };
+  }
 }

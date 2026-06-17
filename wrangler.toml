@@ -1,4 +1,4 @@
-name = "prueba-construacero2026"
+name = "listo-pos-api"
 main = "./worker.js"
 compatibility_date = "2024-12-01"
 workers_dev = true

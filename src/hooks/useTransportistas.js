@@ -6,25 +6,18 @@ import supabase from '../services/supabase/client'
 import useAuthStore from '../store/useAuthStore'
 import { apiUrl, getAuthHeaders } from '../services/apiBase'
 import { showToast } from '../components/ui/Toast'
-import { getLocalTransportistas } from '../lib/offlineSnapshots'
 
 const KEY = ['transportistas']
 
 // ─── Lista (todos o solo activos) ────────────────────────────────────────────
 export function useTransportistas({ soloActivos = true } = {}) {
   const perfil = useAuthStore(useCallback(s => s.perfil, []))
-  const offline = useAuthStore(useCallback(s => s.offline, []))
   return useQuery({
     queryKey: [...KEY, soloActivos],
     queryFn: async () => {
-      if (offline) {
-        const local = await getLocalTransportistas()
-        if (soloActivos) return local.filter(t => t.activo !== false)
-        return local
-      }
       let q = supabase
         .from('transportistas')
-        .select('id, nombre, rif, telefono, color, vehiculo, placa_chuto, placa_batea, activo, zona_cobertura, capacidad')
+        .select('id, nombre, rif, telefono, color, color_batea, vehiculo, placa_chuto, placa_batea, activo, zona_cobertura, capacidad')
         .order('nombre')
       if (soloActivos) q = q.eq('activo', true)
       const { data, error } = await q
@@ -32,7 +25,7 @@ export function useTransportistas({ soloActivos = true } = {}) {
       return data ?? []
     },
     enabled: !!perfil,
-    staleTime: offline ? Infinity : 1000 * 60 * 10,
+    staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 30, // transportistas rarely change
   })
 }

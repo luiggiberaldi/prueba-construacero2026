@@ -5,7 +5,6 @@
 -- 3. Add CHECK constraint on cotizaciones.cotizacion_raiz_id versioning
 
 -- ── 1. Auditoria: supervisores pueden leer ──────────────────────────────────
-DROP POLICY IF EXISTS auditoria_supervisor_select ON public.auditoria;
 CREATE POLICY auditoria_supervisor_select ON public.auditoria
   FOR SELECT
   USING (public.get_rol_actual() = 'supervisor');

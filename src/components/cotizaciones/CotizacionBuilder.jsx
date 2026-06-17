@@ -41,7 +41,7 @@ let _itemCounter = 0
 const STEP_LABELS = ['Cliente', 'Productos', 'Resumen', 'Enviada']
 
 // ─── Auto-guardado en localStorage (por usuario y negocio) ────────────────
-const DRAFT_KEY_BASE = 'construacero_cotizacion_draft'
+const DRAFT_KEY_BASE = 'listopos_cotizacion_draft'
 
 function getDraftKey(userId) {
   // Obtenemos el businessId del store de auth para el sufijo
@@ -475,9 +475,19 @@ function TransportistaSelector({ transportistas, transportistaId, setTransportis
 
 export default function CotizacionBuilder({ cotizacionExistente = null, clientePreseleccionado = null, onVolver, onGuardado, onDespachar }) {
   const esEdicion = !!cotizacionExistente
-  const { perfil, offline } = useAuthStore()
+  const { perfil } = useAuthStore()
   const esSupervisor = (perfil?.rol === 'supervisor' || perfil?.rol === 'jefe')
   const { aplicarMarkup, esExterno: esVendedorExterno } = usePrecioVendedor()
+
+  // Queries & Hooks
+  const { data: clientes      = [], refetch: refetchClientes } = useClientes()
+  const { data: transportistas = [] } = useTransportistas()
+  const { data: vendedores     = [] } = useVendedores()
+  const { data: config = {} }  = useConfigNegocio()
+  const guardarBorrador  = useGuardarBorrador()
+  const enviarCotizacion = useEnviarCotizacion()
+  const tasaHook         = useTasaCambio()
+  const { data: inventarioParaPrecios } = useInventario({ pageSize: 1000 })
 
   // Paso actual del wizard (1-4)
   const [paso, setPaso] = useState(esEdicion ? 2 : 1)
@@ -492,12 +502,12 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
   const [notasInternas,      setNotasInternas]      = useState(cotizacionExistente?.notas_internas ?? '')
   const [monedaPDF,          setMonedaPDFRaw]       = useState(() => {
     const businessId = useAuthStore.getState().perfil?.cuenta_id
-    const key = `construacero_moneda_pdf${businessId ? `-${businessId}` : ''}`
+    const key = `listopos_moneda_pdf${businessId ? `-${businessId}` : ''}`
     return localStorage.getItem(key) || '$'
   })
   const setMonedaPDF = (v) => { 
     const businessId = useAuthStore.getState().perfil?.cuenta_id
-    const key = `construacero_moneda_pdf${businessId ? `-${businessId}` : ''}`
+    const key = `listopos_moneda_pdf${businessId ? `-${businessId}` : ''}`
     setMonedaPDFRaw(v); 
     localStorage.setItem(key, v) 
   }
@@ -505,17 +515,21 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
   const [costoEnvioUsd,      setCostoEnvioUsd]      = useState(cotizacionExistente?.costo_envio_usd ?? 0)
   const [corteUsd,           setCorteUsd]           = useState(cotizacionExistente?.corte_usd ?? 0)
   const [items,              setItems]              = useState(
-    (cotizacionExistente?.items ?? []).map(it => ({
-      _key:          `item-${++_itemCounter}`,
-      productoId:    it.producto_id,
-      codigoSnap:    it.codigo_snap,
-      nombreSnap:    it.nombre_snap,
-      unidadSnap:    it.unidad_snap,
-      cantidad:      Number(it.cantidad),
-      precioUnitUsd: Number(it.precio_unit_usd),
-      descuentoPct:  0, // Discount disabled — always 0
-      origen:        it.producto_id ? (it.origen || 'inventario') : 'externo',
-    }))
+    (cotizacionExistente?.items ?? []).map(it => {
+      const precioBase = Number(it.precio_unit_usd)
+      return {
+        _key:          `item-${++_itemCounter}`,
+        productoId:    it.producto_id,
+        codigoSnap:    it.codigo_snap,
+        nombreSnap:    it.nombre_snap,
+        unidadSnap:    it.unidad_snap,
+        cantidad:      Number(it.cantidad),
+        precioUnitUsd: precioBase,
+        precioOriginalUsd: precioBase,
+        descuentoPct:  0, // Discount disabled — always 0
+        origen:        it.producto_id ? (it.origen || 'inventario') : 'externo',
+      }
+    })
   )
 
   const [errorGeneral,  setErrorGeneral]  = useState('')
@@ -530,7 +544,51 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
   const [waLoading, setWaLoading]   = useState(false)
   const [showResumen, setShowResumen] = useState(false)
   const [editItemIdx, setEditItemIdx] = useState(null)
-  const [conIva, setConIva] = useState(() => localStorage.getItem('construacero_con_iva') === 'true')
+  const [conIva, setConIva] = useState(() => localStorage.getItem('listopos_con_iva') === 'true')
+
+  const prevClienteIdRef = useRef(clienteId)
+
+  const initializedRef = useRef(false)
+  useEffect(() => {
+    if (esEdicion && cotizacionExistente && config && !initializedRef.current) {
+      const descPct = config.descuento_personal_pct ?? 10.00
+      const esPersonal = cotizacionExistente.cliente?.tipo_cliente === 'personal'
+      setItems((cotizacionExistente.items ?? []).map(it => {
+        const precioBase = Number(it.precio_unit_usd)
+        const precioReinflado = esPersonal ? round2(precioBase / (1 - descPct / 100)) : precioBase
+        return {
+          _key:          `item-${++_itemCounter}`,
+          productoId:    it.producto_id,
+          codigoSnap:    it.codigo_snap,
+          nombreSnap:    it.nombre_snap,
+          unidadSnap:    it.unidad_snap,
+          cantidad:      Number(it.cantidad),
+          precioUnitUsd: precioReinflado,
+          precioOriginalUsd: precioReinflado,
+          descuentoPct:  0,
+          origen:        it.producto_id ? (it.origen || 'inventario') : 'externo',
+        }
+      }))
+      initializedRef.current = true
+    }
+  }, [esEdicion, cotizacionExistente, config])
+
+  useEffect(() => {
+    if (!clientes.length || !config) return
+
+    const prevId = prevClienteIdRef.current
+    if (prevId === clienteId) return
+    prevClienteIdRef.current = clienteId
+
+    const prevCli = clientes.find(c => c.id === prevId)
+    const nextCli = clientes.find(c => c.id === clienteId)
+    const prevEsPersonal = prevCli?.tipo_cliente === 'personal'
+    const nextEsPersonal = nextCli?.tipo_cliente === 'personal'
+
+    if (prevEsPersonal === nextEsPersonal) return
+
+    showToast(nextEsPersonal ? 'Cliente personal seleccionado: descuento de personal se aplicará en totales' : 'Descuento de personal removido', 'info')
+  }, [clienteId, clientes, config])
 
   // ── Auto-guardado: restaurar borrador al montar ────────────────────────────
   const [showDraftBanner, setShowDraftBanner] = useState(false)
@@ -614,16 +672,15 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
     return () => clearTimeout(timer)
   }, [paso, clienteId, vendedorId, notasCliente, notasInternas, monedaPDF, items, costoEnvioUsd, corteUsd, esEdicion, enviada])
 
-  const { data: clientes      = [], refetch: refetchClientes } = useClientes()
-  const { data: transportistas = [] } = useTransportistas()
-  const { data: vendedores     = [] } = useVendedores()
-  const { data: config = {} }  = useConfigNegocio()
-  const guardarBorrador  = useGuardarBorrador()
-  const enviarCotizacion = useEnviarCotizacion()
-  const tasaHook         = useTasaCambio()
-  const { data: inventarioParaPrecios } = useInventario({ pageSize: 1000 })
 
-  const { subtotal, descuentoUsd, totalUsd } = calcTotales(items, descuentoGlobalPct, costoEnvioUsd, corteUsd)
+  const clienteSeleccionado = clientes.find(c => c.id === clienteId)
+
+  const { subtotal, descuentoUsd: rawDescuentoUsd, totalUsd: rawTotalUsd } = calcTotales(items, descuentoGlobalPct, costoEnvioUsd, corteUsd)
+  const esPersonal = clienteSeleccionado?.tipo_cliente === 'personal'
+  const descPct = config.descuento_personal_pct ?? 10.00
+  const descuentoPersonalUsd = esPersonal ? round2(subtotal * (descPct / 100)) : 0
+  const descuentoUsd = esPersonal ? descuentoPersonalUsd : rawDescuentoUsd
+  const totalUsd = esPersonal ? round2(subtotal - descuentoPersonalUsd + round2(Number(costoEnvioUsd) || 0) + round2(Number(corteUsd) || 0)) : rawTotalUsd
   const totalBs = tasaHook.tasaEfectiva > 0 ? mulR(totalUsd, tasaHook.tasaEfectiva) : 0
 
   const comisionEstimada = useMemo(
@@ -669,9 +726,6 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
     return stockMap[productoId] ?? Infinity
   }
 
-  // Cliente seleccionado (para mostrar datos)
-  const clienteSeleccionado = clientes.find(c => c.id === clienteId)
-
   // ── Agregar producto ─────────────────────────────────────────────────────
   function agregarProducto(p) {
     const isExterno = p.origen === 'externo'
@@ -687,6 +741,9 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
         }
         return prev.map((it, i) => i === idx ? { ...it, cantidad: nuevaCantidad } : it)
       }
+
+      const precioBase = isExterno ? Number(p.precio_usd) : aplicarMarkup(Number(p.precio_usd))
+
       return [...prev, {
         _key:          `item-${++_itemCounter}`,
         productoId:    isExterno ? null : p.id,
@@ -696,8 +753,8 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
         categoria:     p.categoria || '',
         unidadSnap:    p.unidad ?? 'und',
         cantidad:      isExterno ? (p.cantidadExterna || 1) : 1,
-        // Aplicar markup si es vendedor externo (solo para productos de inventario)
-        precioUnitUsd: isExterno ? Number(p.precio_usd) : aplicarMarkup(Number(p.precio_usd)),
+        precioUnitUsd: precioBase,
+        precioOriginalUsd: precioBase,
         descuentoPct:  0,
       }]
     })
@@ -716,6 +773,7 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
           const newQty = updated[idx].cantidad + qty
           updated = updated.map((it, i) => i === idx ? { ...it, cantidad: newQty } : it)
         } else {
+          const precioBase = aplicarMarkup(Number(producto.precio_usd))
           updated.push({
             _key:          `item-${++_itemCounter}`,
             productoId:    producto.id,
@@ -725,8 +783,8 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
             categoria:     producto.categoria || '',
             unidadSnap:    producto.unidad ?? 'und',
             cantidad:      qty,
-            // Aplicar markup del vendedor externo al hacer bulk-scan
-            precioUnitUsd: aplicarMarkup(Number(producto.precio_usd)),
+            precioUnitUsd: precioBase,
+            precioOriginalUsd: precioBase,
             descuentoPct:  0,
           })
         }
@@ -747,7 +805,15 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
           showToast(`⚠ Stock insuficiente: tienes ${stock} unidades`, 'warning')
         }
       }
-      return { ...it, [campo]: valor }
+
+      const updated = { ...it, [campo]: valor }
+
+      if (campo === 'precioUnitUsd') {
+        const precioUnit = parseFloat(String(valor)) || 0
+        updated.precioOriginalUsd = precioUnit
+      }
+
+      return updated
     }))
   }
 
@@ -780,10 +846,21 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
     setErrorGeneral('')
 
     try {
+      const esPersonal = clienteSeleccionado?.tipo_cliente === 'personal'
+      const descPct = config.descuento_personal_pct ?? 10.00
+      const itemsConDescuento = items.map(it => {
+        const precioUnit = it.precioUnitUsd
+        const precioFinal = esPersonal ? round2(precioUnit * (1 - descPct / 100)) : precioUnit
+        return {
+          ...it,
+          precioUnitUsd: precioFinal
+        }
+      })
+
       const payload = {
         cotizacionId,
         campos: { clienteId, vendedorId: esSupervisor && !esEdicion ? vendedorId : undefined, transportistaId, notasCliente, notasInternas, descuentoGlobalPct, costoEnvioUsd, corteUsd, canal_venta: esVendedorExterno ? 'externo' : 'interno' },
-        items,
+        items: itemsConDescuento,
       }
       console.log('payload cotizacion (builder-guardar)', payload)
 
@@ -806,14 +883,23 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
       let currentId = cotizacionId
       let isOfflineId = String(currentId).startsWith('local_')
       
+      const esPersonal = clienteSeleccionado?.tipo_cliente === 'personal'
+      const descPct = config.descuento_personal_pct ?? 10.00
+      const itemsConDescuento = items.map(it => {
+        const precioUnit = it.precioUnitUsd
+        const precioFinal = esPersonal ? round2(precioUnit * (1 - descPct / 100)) : precioUnit
+        return {
+          ...it,
+          precioUnitUsd: precioFinal
+        }
+      })
+
       // Guardar primero si no tiene ID o actualizar si ya lo tiene
       if (!currentId) {
         const payload = {
           cotizacionId: null,
           campos: { clienteId, vendedorId: esSupervisor && !esEdicion ? vendedorId : undefined, transportistaId, notasCliente, notasInternas, descuentoGlobalPct, costoEnvioUsd, corteUsd },
-          items,
-          sendAfterSave: true,
-          tasaBcv,
+          items: itemsConDescuento,
         }
         console.log('payload cotizacion (builder-enviar-nuevo)', payload)
 
@@ -825,9 +911,7 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
         const res = await guardarBorrador.mutateAsync({
           cotizacionId: currentId,
           campos: { clienteId, vendedorId: esSupervisor && !esEdicion ? vendedorId : undefined, transportistaId, notasCliente, notasInternas, descuentoGlobalPct, costoEnvioUsd, corteUsd },
-          items,
-          sendAfterSave: true,
-          tasaBcv,
+          items: itemsConDescuento,
         })
         if (res?._queued) isOfflineId = true
       }
@@ -877,7 +961,7 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
       cot = {
         id: cotizacionId, numero: 'OFFLINE', cliente_id: clienteId, vendedor_id: vendedor?.id,
         transportista_id: transportistaId, estado: 'borrador', 
-        subtotal_usd: subtotal, descuento_global_pct: descuentoGlobalPct, descuento_usd: descuentoUsd,
+        subtotal_usd: subtotal, descuento_global_pct: descuentoGlobalPct, descuento_usd,
         costo_envio_usd: costoEnvioUsd, corte_usd: corteUsd, total_usd: totalUsd,
         notas_cliente: notasCliente, cliente: clienteHidratado, vendedor
       }
@@ -903,10 +987,6 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
   }
 
   async function descargarPDF() {
-    if ((offline || !navigator.onLine) && !String(cotizacionId).startsWith('local_')) {
-      showToast('Estás offline. La descarga de PDF estará disponible cuando te conectes.', 'warning')
-      return
-    }
     setPdfLoading(true)
     try {
       const { generarPDF } = await import('../../services/pdf/cotizacionPDF')
@@ -923,11 +1003,7 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
         conIVA: conIva,
       })
     } catch (e) {
-      if (e.message?.includes('dynamically imported module') || e.message?.includes('Failed to fetch')) {
-        showToast('Estás offline. La descarga de PDF estará disponible cuando te conectes.', 'warning')
-      } else {
-        showToast('Error al descargar PDF: ' + (e.message || 'Error desconocido'), 'error')
-      }
+      console.error(e)
     } finally {
       setPdfLoading(false)
     }
@@ -958,10 +1034,6 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
   }
 
   async function imprimirCotizacion() {
-    if ((offline || !navigator.onLine) && !String(cotizacionId).startsWith('local_')) {
-      showToast('Estás offline. La impresión estará disponible cuando te conectes.', 'warning')
-      return
-    }
     setPrintLoading(true)
     try {
       const { generarPDF } = await import('../../services/pdf/cotizacionPDF')
@@ -980,31 +1052,13 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
       })
       printOrDownloadPdf(blob, `${numDisplay.replace(/\s+/g, '_')}.pdf`)
     } catch (err) {
-      if (err.message?.includes('dynamically imported module') || err.message?.includes('Failed to fetch')) {
-        showToast('Estás offline. La impresión estará disponible cuando te conectes.', 'warning')
-      } else {
-        showToast('Error al imprimir: ' + (err.message || 'Error desconocido'), 'error')
-      }
+      showToast('Error al imprimir: ' + (err.message || 'Error desconocido'), 'error')
     } finally {
       setPrintLoading(false)
     }
   }
 
   async function handleWhatsApp() {
-    if (offline || numDisplay === 'OFFLINE' || String(cotizacionId).startsWith('local_') || !navigator.onLine) {
-      const totalConIva = conIva 
-        ? (totalUsd + (subtotal - descuentoUsd) * 0.16)
-        : totalUsd
-      const texto = generarMensaje({
-        nombreNegocio: config.nombre_negocio,
-        nombreCliente: clienteSeleccionado?.nombre,
-        numDisplay,
-        totalUsd: totalConIva,
-        nombreVendedor: perfil?.nombre,
-      })
-      window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, '_blank', 'noopener')
-      return
-    }
     setWaLoading(true)
     try {
       const { generarPDF } = await import('../../services/pdf/cotizacionPDF')
@@ -1289,6 +1343,15 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
                     </div>
                   )}
 
+                  {clienteSeleccionado?.tipo_cliente === 'personal' && (
+                    <div className="flex items-center gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                      <User size={16} className="text-amber-600 shrink-0" />
+                      <p className="text-xs text-amber-800 font-bold">
+                        Cliente identificado como Personal. Se aplica descuento automático de personal ({config.descuento_personal_pct ?? 10}%) en la sección de totales.
+                      </p>
+                    </div>
+                  )}
+
                   {/* Alerta: cliente de otro vendedor */}
                   {clienteSeleccionado && perfil?.rol !== 'supervisor' && clienteSeleccionado.vendedor_id && clienteSeleccionado.vendedor_id !== perfil?.id && (
                     <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
@@ -1349,6 +1412,8 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
                   onAnterior={anterior}
                   preciosMap={preciosMap}
                   stockMap={stockMap}
+                  esPersonal={esPersonal}
+                  descPct={descPct}
                 />
               </div>
             </div>
@@ -1402,7 +1467,7 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
                   <label className="text-xs font-semibold text-slate-600 cursor-pointer flex items-center gap-2 select-none w-full">
                     <input type="checkbox" checked={conIva} onChange={e => {
                       setConIva(e.target.checked)
-                      localStorage.setItem('construacero_con_iva', e.target.checked ? 'true' : 'false')
+                      localStorage.setItem('listopos_con_iva', e.target.checked ? 'true' : 'false')
                     }} className="rounded text-primary focus:ring-primary h-3.5 w-3.5 border-slate-300" />
                     Incluir IVA (16%) en el PDF
                   </label>
@@ -1511,10 +1576,16 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
                   <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                     <User size={16} className="text-primary" />
                   </div>
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="font-bold text-sm truncate" style={{ color: clienteSeleccionado?.vendedor?.color || '#1e293b' }}>{clienteSeleccionado?.nombre}</p>
-                    {clienteSeleccionado?.tipo_cliente && (
-                      <p className="text-xs text-slate-400 capitalize">{clienteSeleccionado.tipo_cliente}</p>
+                    {clienteSeleccionado?.tipo_cliente === 'personal' ? (
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 mt-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200 shrink-0">
+                        Personal ({config.descuento_personal_pct ?? 10}%)
+                      </span>
+                    ) : (
+                      clienteSeleccionado?.tipo_cliente && (
+                        <p className="text-xs text-slate-400 capitalize">{clienteSeleccionado.tipo_cliente}</p>
+                      )
                     )}
                   </div>
                 </div>
@@ -1557,10 +1628,21 @@ export default function CotizacionBuilder({ cotizacionExistente = null, clienteP
 
               {/* Totales */}
               <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-2">
+                {clienteSeleccionado?.tipo_cliente === 'personal' && (
+                  <p className="text-[10px] text-amber-600 font-semibold bg-amber-50 border border-amber-100 px-2 py-1.5 rounded-lg mb-2 text-center">
+                    * Descuento automático de personal ({config.descuento_personal_pct ?? 10}%) se aplicará en el total.
+                  </p>
+                )}
                 <div className="flex justify-between text-sm text-slate-500">
                   <span>Subtotal</span>
                   <span className="font-medium text-slate-700">{fmtMoneda(subtotal)}</span>
                 </div>
+                {clienteSeleccionado?.tipo_cliente === 'personal' && (
+                  <div className="flex justify-between text-sm text-amber-700 font-medium">
+                    <span>Descuento Personal ({config.descuento_personal_pct ?? 10}%)</span>
+                    <span>-{fmtMoneda(descuentoPersonalUsd)}</span>
+                  </div>
+                )}
                 {costoEnvioUsd > 0 && (
                   <div className="flex justify-between text-sm text-slate-500">
                     <span>Envío</span>

@@ -246,22 +246,24 @@ export default function InventarioView() {
         title="Inventario"
         subtitle={<>{isLoading ? 'Cargando...' : `${productosFiltrados.length} producto${productosFiltrados.length !== 1 ? 's' : ''}${stockBajo ? ' con stock bajo' : ''}`}{!esPrivilegiado && <span className="ml-1 opacity-60">(catálogo de precios)</span>}</>}
         action={puedeGestionarInventario && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/*
             <button
               onClick={() => setShowIngresoLote(true)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-emerald-500 text-emerald-700 font-bold text-sm hover:bg-emerald-50 transition-all shadow-sm"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-emerald-500 text-emerald-700 font-bold text-sm hover:bg-emerald-50 transition-all shadow-sm shrink-0"
             >
               <ClipboardPaste size={16} />
               <span className="hidden sm:inline">Ingreso Masivo</span>
               <span className="sm:hidden">Masivo</span>
             </button>
-            <button onClick={() => setModalLoteOpen(true)} className="flex items-center gap-2 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition-all shadow-lg active:scale-[0.98] bg-slate-700 hover:bg-slate-600">
+            */}
+            <button onClick={() => setModalLoteOpen(true)} className="flex items-center gap-2 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition-all shadow-lg active:scale-[0.98] bg-slate-700 hover:bg-slate-600 shrink-0">
               <ArrowLeftRight size={16} />
               <span className="hidden sm:inline">Ingreso / Egreso</span>
             </button>
             <button
               onClick={() => setShowBatchPrice(true)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-amber-400 text-amber-700 font-bold text-sm hover:bg-amber-50 transition-all shadow-sm"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-amber-400 text-amber-700 font-bold text-sm hover:bg-amber-50 transition-all shadow-sm shrink-0"
             >
               <TrendingUp size={16} />
               <span className="hidden sm:inline">Actualizar Precios</span>
@@ -269,15 +271,17 @@ export default function InventarioView() {
             </button>
             <button
               onClick={() => setShowTransformacion(true)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-all shadow-sm"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-all shadow-sm shrink-0"
             >
               <ArrowLeftRight size={16} />
               <span className="hidden sm:inline">Transformar</span>
             </button>
 
-            <button onClick={abrirCrear} className="flex items-center gap-2 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition-all shadow-lg active:scale-[0.98]"
+            <button onClick={abrirCrear} className="flex items-center gap-2 text-white font-bold text-sm px-4 py-2.5 rounded-xl transition-all shadow-lg active:scale-[0.98] shrink-0"
               style={{ background: 'linear-gradient(135deg, #1B365D, #B8860B)' }}>
-              <Plus size={16} />Nuevo producto
+              <Plus size={16} />
+              <span className="hidden sm:inline">Nuevo producto</span>
+              <span className="sm:hidden">Nuevo</span>
             </button>
           </div>
         )}
@@ -432,9 +436,10 @@ export default function InventarioView() {
       ) : (
         vistaMode === 'grid' ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            {productosPaginados.map(p => (
+            {productosPaginados.map((p, index) => (
               <ProductoCard
                 key={p.id}
+                index={index}
                 producto={p}
                 onEditar={abrirEditar}
                 onClonar={abrirClonar}

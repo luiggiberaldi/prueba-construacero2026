@@ -1,5 +1,5 @@
 // src/services/pdf/transportistasPDF.js
-// Genera PDF profesional del Listado Detallado de Choferes / Transportistas — Construacero Carabobo
+// Genera PDF profesional del Listado Detallado de Choferes / Transportistas — Listo POS
 import { jsPDF } from 'jspdf'
 import { cargarLogo } from './pdfLogo'
 import { WATERMARK_LOGO } from './watermarkBase64'
@@ -43,8 +43,8 @@ function drawFooter(doc, config) {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(6)
     doc.setTextColor(...C_GRAY)
-    let footName = config.nombre_negocio || 'Construacero Carabobo C.A.'
-    if (footName.trim().toUpperCase() === 'PRUEBA' || footName.trim() === '') footName = 'Construacero Carabobo C.A.'
+    let footName = config.nombre_negocio || 'Listo POS C.A.'
+    if (footName.trim().toUpperCase() === 'PRUEBA' || footName.trim() === '') footName = 'Listo POS C.A.'
     doc.text(footName, MARGIN, PAGE_H - 10)
     doc.text(`Generado: ${new Date().toLocaleString('es-VE')}`, MARGIN, PAGE_H - 6)
     doc.text(`Página ${p} de ${totalPages}`, PAGE_W - MARGIN, PAGE_H - 10, { align: 'right' })

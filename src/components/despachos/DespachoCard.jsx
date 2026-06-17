@@ -1,38 +1,36 @@
 import { useState, useRef, useEffect, memo, Fragment } from 'react'
-import { FileText, Calendar, Truck, CheckCircle, Ban, RefreshCcw, RefreshCw, Download, Loader2, Eye, MoreHorizontal, MoreVertical, ChevronDown, Printer, Tag, Pencil, RotateCcw, AlertTriangle, Clock, CreditCard, DollarSign, Check, PackageCheck, Mail, Handshake } from 'lucide-react'
+import { FileText, Calendar, Truck, CheckCircle, Ban, RefreshCcw, RefreshCw, Download, Loader2, Eye, MoreHorizontal, MoreVertical, ChevronDown, Printer, Tag, Pencil, RotateCcw, AlertTriangle, Clock, CreditCard, DollarSign, Check, PackageCheck, Mail, Handshake, PackageX } from 'lucide-react'
 import EstadoBadge from '../cotizaciones/EstadoBadge'
 import MobileActionSheet from '../cotizaciones/MobileActionSheet'
 import ConfirmModal from '../ui/ConfirmModal'
 import useAuthStore from '../../store/useAuthStore'
+import { useEditarDespacho } from '../../hooks/useDespachos'
 import { getDespachoAction, PRIMARY_ACTION_COLORS } from '../../utils/despachoActions'
 import { fmtUsdSimple as fmtUsd, fmtFecha, fmtFechaHora, fmtBs, usdToBs } from '../../utils/format'
 import supabase from '../../services/supabase/client'
 import { useTasaCambio } from '../../hooks/useTasaCambio'
 import { useConfigNegocio } from '../../hooks/useConfigNegocio'
 import DetalleModal from '../ui/DetalleModal'
+import { Modal } from '../ui/Modal'
 import DescuentoModal from './DescuentoModal'
 import EditDespachoModal from './EditDespachoModal'
 import DevolverAnularModal from './DevolverAnularModal'
 import CambiarTransportistaModal from './CambiarTransportistaModal'
 import ConciliarCodModal from './ConciliarCodModal'
 import FacturaModal from './FacturaModal'
+import DevolucionParcialModal from './DevolucionParcialModal'
 import { showToast } from '../ui/Toast'
-import { getOfflineDocument } from '../../lib/offlineDocuments'
 import { MessageCircle } from 'lucide-react'
 import SeguimientoFijadoModal from '../ui/SeguimientoFijadoModal'
 import { compartirPorWhatsApp, generarMensaje } from '../../utils/whatsapp'
 import { calcComisionEstimada } from '../../utils/comisionUtils'
-import { generarDespachoPDF } from '../../services/pdf/despachoPDF'
-import { generarOrdenDespachoPDF } from '../../services/pdf/ordenDespachoPDF'
-import { generarGuiaDespachoPDF } from '../../services/pdf/guiaDespachoPDF'
-import { generarFacturaPDF } from '../../services/pdf/facturaPDF'
 
 export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular, onReciclar, tasa = 0, config = {}, estadoCambiando = false }) {
   const { data: configNegocio } = useConfigNegocio()
   const pctCabilla = Number(configNegocio?.comision_pct_cabilla ?? 0)
   const pctOtros   = Number(configNegocio?.comision_pct_otros   ?? 0)
   const catCabilla = (configNegocio?.comision_categoria_cabilla || 'Cabilla').toLowerCase()
-  const { perfil, offline } = useAuthStore()
+  const { perfil } = useAuthStore()
   const esSupervisor = (perfil?.rol === 'supervisor' || perfil?.rol === 'jefe')
   const esDesarrollador = perfil?.rol === 'desarrollador'
   const esAdministracion = perfil?.rol === 'administracion'
@@ -55,22 +53,69 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
   const printBtnRef = useRef(null)
   const downloadBtnRef = useRef(null)
   const adminBtnRef = useRef(null)
-  const [monedaPdf, setMonedaPdf] = useState(() => localStorage.getItem('construacero_moneda_pdf') || '$')
+  const [monedaPdf, setMonedaPdf] = useState(() => localStorage.getItem('listopos_moneda_pdf') || '$')
   const [tasaPersonalizada, setTasaPersonalizada] = useState('')
+  const [porcentajePdf, setPorcentajePdf] = useState('')
   const [showCambiarTransportista, setShowCambiarTransportista] = useState(false)
   const [showConciliarCod, setShowConciliarCod] = useState(false)
   const [showFacturaModal, setShowFacturaModal] = useState(false)
+  const [showDevolucionParcial, setShowDevolucionParcial] = useState(false)
   const [facturaActionType, setFacturaActionType] = useState('download')
   const esLogistica = perfil?.rol === 'logistica' || perfil?.rol === 'jefe' || perfil?.rol === 'desarrollador'
+  const puedeAjustarPorcentaje = ['administracion', 'logistica', 'jefe', 'desarrollador'].includes(perfil?.rol)
   const { tasaBcv, tasaUsdt } = useTasaCambio()
+
+  const editarDespacho = useEditarDespacho()
+  const [showNotaModal, setShowNotaModal] = useState(false)
+  const [nuevaNota, setNuevaNota] = useState('')
+
+  async function handleGuardarNota() {
+    try {
+      await editarDespacho.mutateAsync({
+        despachoId: despacho.id,
+        notas: nuevaNota || null
+      })
+      setShowNotaModal(false)
+    } catch (err) {
+      // useEditarDespacho handles its own toast error display
+    }
+  }
+
+  async function handleEliminarNota() {
+    try {
+      await editarDespacho.mutateAsync({
+        despachoId: despacho.id,
+        notas: null
+      })
+      setShowNotaModal(false)
+    } catch (err) {
+      // useEditarDespacho handles its own toast error display
+    }
+  }
 
   const tasaImpresion = (esLogistica && (monedaPdf === 'bs' || monedaPdf === 'bcv') && Number(tasaPersonalizada) > 0)
     ? Number(tasaPersonalizada)
     : tasa
 
+  const parsePorcentaje = (input) => {
+    if (!input) return 100
+    let clean = String(input).trim().replace(/%/g, '').replace(/,/g, '.')
+    let num = parseFloat(clean)
+    if (isNaN(num)) return 100
+    const hasSign = String(input).trim().startsWith('+') || String(input).trim().startsWith('-')
+    if (hasSign) {
+      return 100 + num
+    }
+    // Si no tiene signo y es un valor pequeño (entre 0 y 50, ej: 10, 15), se asume que es suma (ej: +10%)
+    if (num > 0 && num <= 50) {
+      return 100 + num
+    }
+    return num
+  }
+
   function seleccionarMoneda(moneda) {
     setMonedaPdf(moneda)
-    localStorage.setItem('construacero_moneda_pdf', moneda)
+    localStorage.setItem('listopos_moneda_pdf', moneda)
   }
 
   const MONEDA_OPTIONS = [
@@ -100,6 +145,31 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
               onChange={e => setTasaPersonalizada(e.target.value)}
               className="w-full text-xs px-2 py-1 border border-slate-200 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
             />
+          </div>
+        )}
+        {puedeAjustarPorcentaje && (
+          <div className="px-3 py-2 bg-slate-50 border-t border-slate-100 flex flex-col gap-1 mt-1">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Ajuste Porcentual (%)</span>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={porcentajePdf}
+                placeholder="100% (Base)"
+                onChange={e => {
+                  const val = e.target.value
+                  if (val === '' || /^[+-]?\d*([.,]\d*)?%?$/.test(val)) {
+                    setPorcentajePdf(val)
+                  }
+                }}
+                className="w-full text-xs px-2 py-1 border border-slate-200 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+              />
+              {porcentajePdf && (
+                <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200 whitespace-nowrap">
+                  {parsePorcentaje(porcentajePdf)}%
+                </span>
+              )}
+            </div>
+            <span className="text-[9px] text-slate-400">Ej: 10% (aumento del 10%), 90% (precio al 90%), -15%</span>
           </div>
         )}
       </div>
@@ -238,14 +308,15 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
     ? `COT-${String(despacho.cotizacion.numero).padStart(5, '0')}`
     : '—'
 
-  const canDespachar = ['administracion', 'jefe', 'desarrollador'].includes(perfil?.rol) && despacho.estado === 'pendiente'
-  const canEntregar = ['logistica', 'jefe', 'desarrollador'].includes(perfil?.rol) && despacho.estado === 'despachada'
+  const canDespachar = (esAdministracion || esDesarrollador || rol === 'jefe') && despacho.estado === 'pendiente'
+  const canEntregar = (perfil?.rol === 'logistica' || perfil?.rol === 'jefe' || esDesarrollador) && despacho.estado === 'despachada'
   const esVendedorPropio = perfil?.id === despacho.vendedor_id
   const canAnular = despacho.estado === 'pendiente' && (esDesarrollador || esAdministracion || esSupervisor || esVendedorPropio)
   const canDevolver = (despacho.estado === 'despachada' || despacho.estado === 'entregada') && ['logistica', 'jefe', 'desarrollador'].includes(perfil?.rol)
+  const canDevolucionParcial = despacho.estado === 'entregada' && ['administracion', 'logistica', 'desarrollador', 'jefe'].includes(perfil?.rol)
   const canReciclar = ((esSupervisor || esDesarrollador) && despacho.estado === 'anulada' && onReciclar)
     || (['vendedor', 'vendedor_sin_comision'].includes(rol) && despacho.estado === 'anulada' && esVendedorPropio && onReciclar)
-  const canDescuento = (esAdministracion || esDesarrollador) && ['pendiente', 'despachada'].includes(despacho.estado)
+  const canDescuento = (esAdministracion || esDesarrollador || perfil?.rol === 'jefe') && ['pendiente', 'despachada'].includes(despacho.estado)
   const canEditar = despacho.estado === 'pendiente' && (esPrivilegiado || perfil?.rol === 'logistica' || despacho.vendedor_id === perfil?.id)
   const descuentoTotal = Number(despacho.descuento_total_usd || 0)
   const fleteUsd = Number(despacho.flete_usd || 0)
@@ -254,6 +325,38 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
   const totalBruto = Number(despacho.total_usd || 0) // ya incluye flete y corte
   const subtotalProductos = totalBruto - fleteUsd - corteUsd // solo productos sin servicios
   const totalFinal = totalBruto - descuentoTotal // total con flete+corte, menos descuento
+
+  const clienteObj = despacho.cliente_factura || despacho.cliente
+  const esPersonal = clienteObj?.tipo_cliente === 'personal'
+
+  const [personalItems, setPersonalItems] = useState([])
+  useEffect(() => {
+    if (esPersonal) {
+      fetchItemsDespacho()
+        .then(data => setPersonalItems(data || []))
+        .catch(err => console.error('Error fetching personal items:', err))
+    }
+  }, [despacho.id, esPersonal])
+
+  const descPersonalPct = esPersonal ? (configNegocio?.descuento_personal_pct ?? 10.0) : 0
+  let subtotalOriginal = subtotalProductos
+  let descuentoPersonal = 0
+
+  if (esPersonal && descPersonalPct > 0 && personalItems.length > 0) {
+    let sumOriginal = 0
+    personalItems.forEach(it => {
+      if (!it.es_prestamo) {
+        const cant = Number(it.cantidad || 0)
+        const precio = Number(it.precio_unit_usd || 0)
+        const precioOrig = Math.round((precio / (1 - descPersonalPct / 100)) * 100) / 100
+        sumOriginal += precioOrig * cant
+      }
+    })
+    subtotalOriginal = sumOriginal
+    descuentoPersonal = Math.max(0, subtotalOriginal - subtotalProductos)
+  }
+
+  const totalOriginal = totalBruto + descuentoPersonal
 
   // tienePrestamos is already declared at the top of the component
   const itemsDelDespachoConFallback = tienePrestamos && !itemsDelDespacho.some(x => x.es_prestamo)
@@ -315,17 +418,6 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
   }
   // Helper: fetch notas_despacho_items con fallback offline
   async function fetchItemsDespacho() {
-    if (String(despacho.id).startsWith('local_') || despacho._local || despacho._queued) {
-      const doc = await getOfflineDocument('despacho', despacho.id)
-      return doc?.items || despacho.items || []
-    }
-    if (offline || !navigator.onLine) {
-      const { get } = await import('idb-keyval')
-      const cached = await get(`desp_detail_${despacho.id}`)
-      const cachedItems = cached?.data?.items || despacho.items || []
-      if (cachedItems.length > 0) return cachedItems
-      throw new Error('Este despacho no tiene artÃ­culos guardados localmente. ConÃ©ctate una vez para descargar el detalle antes de imprimir offline.')
-    }
     const res = await supabase
       .from('notas_despacho_items')
       .select('id, producto_id, codigo_snap, nombre_snap, unidad_snap, cantidad, precio_unit_usd, total_linea_usd, orden, es_prestamo, productos(categoria)')
@@ -341,12 +433,16 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
   async function descargarPDF() {
     setPdfLoading(true)
     try {
-      const itemsFinal = await fetchItemsDespacho()
+      const [{ generarDespachoPDF }, itemsFinal] = await Promise.all([
+        import('../../services/pdf/despachoPDF'),
+        fetchItemsDespacho(),
+      ])
       await generarDespachoPDF({
         despacho, items: itemsFinal, config,
         formaPago: despacho.forma_pago || '',
         monedaPDF: monedaPdf, tasa: tasaImpresion,
         tasaUsdt: tasaUsdt.precio, tasaBcv: tasaBcv.precio,
+        porcentaje: parsePorcentaje(porcentajePdf),
       })
     } catch (err) {
       showToast('Error al generar PDF: ' + (err.message || 'Error desconocido'), 'error')
@@ -358,12 +454,16 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
   async function descargarOrdenDespacho() {
     setOrdenLoading(true)
     try {
-      const itemsFinal = await fetchItemsDespacho()
+      const [{ generarOrdenDespachoPDF }, itemsFinal] = await Promise.all([
+        import('../../services/pdf/ordenDespachoPDF'),
+        fetchItemsDespacho(),
+      ])
       await generarOrdenDespachoPDF({
         despacho, items: itemsFinal, config,
         formaPago: despacho.forma_pago || '',
         monedaPDF: monedaPdf, tasa: tasaImpresion,
         tasaUsdt: tasaUsdt.precio, tasaBcv: tasaBcv.precio,
+        porcentaje: parsePorcentaje(porcentajePdf),
       })
     } catch (err) {
       showToast('Error al generar Orden de Despacho: ' + (err.message || 'Error desconocido'), 'error')
@@ -375,7 +475,10 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
   async function descargarGuiaDespacho() {
     setGuiaLoading(true)
     try {
-      const itemsFinal = await fetchItemsDespacho()
+      const [{ generarGuiaDespachoPDF }, itemsFinal] = await Promise.all([
+        import('../../services/pdf/guiaDespachoPDF'),
+        fetchItemsDespacho(),
+      ])
       await generarGuiaDespachoPDF({
         despacho, items: itemsFinal, config
       })
@@ -431,14 +534,18 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
       setPdfLoading(true)
     }
     try {
-      const itemsFinal = await fetchItemsDespacho()
+      const [{ generarFacturaPDF }, itemsFinal] = await Promise.all([
+        import('../../services/pdf/facturaPDF'),
+        fetchItemsDespacho(),
+      ])
       const { blob, filename } = await generarFacturaPDF({
         despacho, items: itemsFinal, config,
         formaPago: despacho.forma_pago || '',
         monedaPDF: monedaPdf, tasa: tasaImpresion,
         tasaUsdt: tasaUsdt.precio, tasaBcv: tasaBcv.precio,
         returnBlob: true,
-        nroFactura, nroControl
+        nroFactura, nroControl,
+        porcentaje: parsePorcentaje(porcentajePdf),
       })
       if (facturaActionType === 'print') {
         printOrDownloadPdf(blob, filename)
@@ -464,13 +571,17 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
     setPrintLoading(true)
     setShowPrintMenu(false)
     try {
-      const itemsFinal = await fetchItemsDespacho()
+      const [{ generarDespachoPDF }, itemsFinal] = await Promise.all([
+        import('../../services/pdf/despachoPDF'),
+        fetchItemsDespacho(),
+      ])
       const { blob, filename } = await generarDespachoPDF({
         despacho, items: itemsFinal, config,
         formaPago: despacho.forma_pago || '',
         monedaPDF: monedaPdf, tasa: tasaImpresion,
         tasaUsdt: tasaUsdt.precio, tasaBcv: tasaBcv.precio,
         returnBlob: true,
+        porcentaje: parsePorcentaje(porcentajePdf),
       })
       printOrDownloadPdf(blob, filename)
     } catch (err) {
@@ -484,13 +595,17 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
     setPrintLoading(true)
     setShowPrintMenu(false)
     try {
-      const itemsFinal = await fetchItemsDespacho()
+      const [{ generarDespachoPDF }, itemsFinal] = await Promise.all([
+        import('../../services/pdf/despachoPDF'),
+        fetchItemsDespacho(),
+      ])
       const { blob, filename } = await generarDespachoPDF({
         despacho, items: itemsFinal, config,
         formaPago: despacho.forma_pago || '',
         monedaPDF: 'bs', tasa: tasaImpresion,
         tasaUsdt: tasaUsdt.precio, tasaBcv: tasaBcv.precio,
         returnBlob: true,
+        porcentaje: parsePorcentaje(porcentajePdf),
       })
 
       const clienteObj = despacho.cliente_factura || despacho.cliente
@@ -528,13 +643,17 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
     setPrintLoading(true)
     setShowPrintMenu(false)
     try {
-      const itemsFinal = await fetchItemsDespacho()
+      const [{ generarOrdenDespachoPDF }, itemsFinal] = await Promise.all([
+        import('../../services/pdf/ordenDespachoPDF'),
+        fetchItemsDespacho(),
+      ])
       const { blob, filename } = await generarOrdenDespachoPDF({
         despacho, items: itemsFinal, config,
         formaPago: despacho.forma_pago || '',
         monedaPDF: monedaPdf, tasa: tasaImpresion,
         tasaUsdt: tasaUsdt.precio, tasaBcv: tasaBcv.precio,
         returnBlob: true,
+        porcentaje: parsePorcentaje(porcentajePdf),
       })
       printOrDownloadPdf(blob, filename)
     } catch (err) {
@@ -548,7 +667,10 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
     setPrintLoading(true)
     setShowPrintMenu(false)
     try {
-      const itemsFinal = await fetchItemsDespacho()
+      const [{ generarGuiaDespachoPDF }, itemsFinal] = await Promise.all([
+        import('../../services/pdf/guiaDespachoPDF'),
+        fetchItemsDespacho(),
+      ])
       const { blob, filename } = await generarGuiaDespachoPDF({
         despacho, items: itemsFinal, config,
         returnBlob: true,
@@ -565,13 +687,17 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
     setPrintLoading(true)
     setShowPrintMenu(false)
     try {
-      const itemsFinal = await fetchItemsDespacho()
+      const [{ generarOrdenDespachoPDF }, itemsFinal] = await Promise.all([
+        import('../../services/pdf/ordenDespachoPDF'),
+        fetchItemsDespacho(),
+      ])
       const { blob, filename } = await generarOrdenDespachoPDF({
         despacho, items: itemsFinal, config,
         formaPago: despacho.forma_pago || '',
         monedaPDF: monedaPdf, tasa: tasaImpresion,
         tasaUsdt: tasaUsdt.precio, tasaBcv: tasaBcv.precio,
         returnBlob: true,
+        porcentaje: parsePorcentaje(porcentajePdf),
       })
 
       const clienteObj = despacho.cliente_factura || despacho.cliente
@@ -653,7 +779,7 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
     if (canReciclar && primaryAction?.key !== 'reciclar')
       actions.push({ label: getDespachoAction('reciclar', rol).label || 'Reutilizar', icon: RefreshCcw, onClick: () => onReciclar(despacho), textColor: 'text-teal-600' })
     
-    const canCambiarTransportista = esLogistica && ['pendiente', 'despachada'].includes(despacho.estado)
+    const canCambiarTransportista = esLogistica && ['pendiente', 'despachada', 'entregada'].includes(despacho.estado)
     if (canCambiarTransportista) {
       const tieneTransportista = !!despacho?.transportista_id
       actions.push({
@@ -677,6 +803,28 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
       })
     }
 
+    if (canDevolucionParcial) {
+      actions.push({
+        label: 'Devolución Parcial',
+        icon: PackageX,
+        onClick: () => setShowDevolucionParcial(true),
+        textColor: 'text-amber-600 font-medium'
+      })
+    }
+
+    if (perfil?.rol === 'logistica' || perfil?.rol === 'desarrollador' || perfil?.rol === 'jefe') {
+      const tieneNota = !!despacho.notes?.trim() || !!despacho.notas?.trim()
+      actions.push({
+        label: tieneNota ? 'Editar/Eliminar observación' : 'Agregar observación',
+        icon: MessageCircle,
+        onClick: () => {
+          setNuevaNota(despacho.notas || '')
+          setShowNotaModal(true)
+        },
+        textColor: 'text-slate-700'
+      })
+    }
+
     return actions
   }
 
@@ -687,7 +835,9 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
     act.label !== 'No entregado / Devolver' &&
     act.label !== 'Cambiar Transportista' &&
     act.label !== 'Agregar Transportista' &&
-    act.label !== 'Marcar COD como pagado'
+    act.label !== 'Marcar COD como pagado' &&
+    act.label !== 'Devolución Parcial' &&
+    !act.label.includes('observación')
   )
 
   // Resolver config del confirm modal
@@ -747,6 +897,11 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
                   <Handshake size={10} /> Mixto
                 </span>
               )
+            )}
+            {despacho.tiene_devoluciones && (
+              <span className="inline-flex items-center gap-1 bg-amber-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded border border-amber-400/50 shadow-sm uppercase tracking-wider leading-none shrink-0 select-none" title="Este despacho tiene devoluciones parciales registradas">
+                Devolución
+              </span>
             )}
           </div>
           {/* Kebab ⋮ — acciones secundarias */}
@@ -849,12 +1004,18 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
 
       {/* ── Total + Flete + Corte ── */}
       <div className="mx-3 mb-2 bg-slate-50 rounded-xl px-3 py-2 space-y-1">
-        {(fleteUsd > 0 || corteUsd > 0) && (
+        {(fleteUsd > 0 || corteUsd > 0 || descuentoPersonal > 0) && (
           <>
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-medium text-slate-400">Subtotal</span>
-              <span className="text-xs font-semibold text-slate-500">{fmtUsd(subtotalProductos)}</span>
+              <span className="text-xs font-semibold text-slate-500">{fmtUsd(subtotalOriginal)}</span>
             </div>
+            {descuentoPersonal > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-medium text-amber-600">Desc. Personal ({descPersonalPct}%)</span>
+                <span className="text-xs font-semibold text-amber-700">-{fmtUsd(descuentoPersonal)}</span>
+              </div>
+            )}
             {fleteUsd > 0 && (
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-medium text-slate-400">Flete</span>
@@ -884,9 +1045,9 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
             )}
           </div>
           <div className="text-right">
-            {descuentoTotal > 0 ? (
+            {(descuentoTotal > 0 || descuentoPersonal > 0) ? (
               <>
-                <span className="text-xs text-slate-400 line-through mr-1.5">{fmtUsd(totalBruto)}</span>
+                <span className="text-xs text-slate-400 line-through mr-1.5">{fmtUsd(totalOriginal)}</span>
                 <span className="text-lg font-bold text-amber-700">{fmtUsd(totalFinal)}</span>
                 {tasa > 0 && totalFinal > 0 && (
                   <div className="text-[11px] text-slate-400">{fmtBs(usdToBs(totalFinal, tasa))}</div>
@@ -1450,6 +1611,74 @@ export default memo(function DespachoCard({ despacho, onCambiarEstado, onAnular,
         actionType={facturaActionType}
         loading={pdfLoading || printLoading}
       />
+
+      <DevolucionParcialModal
+        isOpen={showDevolucionParcial}
+        onClose={() => setShowDevolucionParcial(false)}
+        despacho={despacho}
+      />
+
+      {/* Modal para agregar/editar observación (Solo Logística) */}
+      <Modal
+        isOpen={showNotaModal}
+        onClose={() => setShowNotaModal(false)}
+        title={`${despacho?.notas ? 'Editar/Eliminar' : 'Agregar'} observación — Despacho #${despacho?.numero}`}
+        className="sm:max-w-md"
+      >
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+              Observación / Nota interna:
+            </p>
+            <textarea
+              value={nuevaNota}
+              onChange={e => setNuevaNota(e.target.value)}
+              placeholder="Escribe la observación para esta nota de entrega..."
+              rows={4}
+              disabled={editarDespacho.isPending}
+              className="w-full text-sm px-3 py-2 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium resize-none"
+            />
+          </div>
+
+          <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 shrink-0">
+            {despacho.notas ? (
+              <button
+                type="button"
+                onClick={handleEliminarNota}
+                disabled={editarDespacho.isPending}
+                className="px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              >
+                Eliminar Nota
+              </button>
+            ) : <div />}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowNotaModal(false)}
+                disabled={editarDespacho.isPending}
+                className="px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleGuardarNota}
+                disabled={editarDespacho.isPending}
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:scale-95 disabled:opacity-50 rounded-lg transition-all"
+              >
+                {editarDespacho.isPending ? (
+                  <>
+                    <Loader2 size={12} className="animate-spin" />
+                    Guardando...
+                  </>
+                ) : (
+                  'Guardar Observación'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Modal>
 
       {/* ── Menú kebab ⋮ — nivel raíz, fixed para escapar overflow:hidden ── */}
       {showAdminMenu && (moreActions.length > 0 || canAnular) && (() => {

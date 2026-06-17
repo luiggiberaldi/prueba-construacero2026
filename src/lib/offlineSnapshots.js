@@ -11,6 +11,7 @@ const SNAPSHOT_COTIZACIONES_KEY = 'offline_snapshot_cotizaciones'
 const SNAPSHOT_USUARIOS_KEY = 'offline_snapshot_usuarios'
 const SNAPSHOT_DESPACHOS_KEY = 'offline_snapshot_despachos'
 const OFFLINE_CREATED_CLIENTS_KEY = 'offline_created_clients'
+const OFFLINE_CREATED_TRANSPORTISTAS_KEY = 'offline_created_transportistas'
 const ACTIVE_OPERATOR_KEY = 'listo_active_operator_id'
 const ACTIVE_ACCOUNT_KEY = 'listo_active_account_id'
 
@@ -279,9 +280,34 @@ export async function getLocalProductos() {
 }
 
 /**
- * Obtiene el snapshot local de transportistas
+ * Obtiene el snapshot local de transportistas.
+ * Combina los transportistas descargados con los creados offline que están en la cola.
  */
 export async function getLocalTransportistas() {
   const cached = await getSnapshot(SNAPSHOT_TRANSPORTISTAS_KEY)
-  return cached?.data || []
+  const base = cached?.data || []
+
+  // Leer transportistas creados offline pendientes de sincronizar
+  const allKeys = (await get(scopedKey(OFFLINE_CREATED_TRANSPORTISTAS_KEY))) || []
+  return [...allKeys, ...base]
+}
+
+/**
+ * Agrega un transportista creado offline temporalmente al snapshot local
+ */
+export async function saveLocalTransportistaOffline(trans) {
+  try {
+    const key = scopedKey(OFFLINE_CREATED_TRANSPORTISTAS_KEY)
+    const list = (await get(key)) || []
+    await set(key, [trans, ...list])
+  } catch (err) {
+    console.error('[SNAPSHOT] Error guardando transportista offline:', err)
+  }
+}
+
+/**
+ * Limpia los transportistas creados offline una vez sincronizados
+ */
+export async function clearLocalTransportistasOffline() {
+  await set(scopedKey(OFFLINE_CREATED_TRANSPORTISTAS_KEY), [])
 }

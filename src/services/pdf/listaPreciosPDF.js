@@ -1,5 +1,5 @@
 // src/services/pdf/listaPreciosPDF.js
-// Genera PDF "Lista de Precios" para enviar a clientes — Construacero Carabobo
+// Genera PDF "Lista de Precios" para enviar a clientes — Listo POS
 import { jsPDF } from 'jspdf'
 import { WATERMARK_LOGO } from './watermarkBase64'
 import { LOGO_LISTA_PRECIOS } from './logoListaPreciosBase64'
@@ -368,8 +368,8 @@ function drawFooter(doc, config) {
       doc.setFontSize(8.5)
       doc.setTextColor(...LP_TEXT)
 
-      const addr1 = 'Av. 76, (Calle S-3) Nro. 70-C-766, Local Galpón Nro. 3 Edificio Centro Industrial Massico II'
-      const addr2 = 'Parcela MB-6 y Mb7, Urb. Industrial Aeropuerto Vía Flor Amarillo, Valencia, Edo. Carabobo, Zona Postal 2003'
+      const addr1 = config.direccion_negocio || 'Listo POS C.A.'
+      const addr2 = config.pie_pagina_pdf || (config.rif_negocio ? `RIF: ${config.rif_negocio}` : '')
 
       const addr1W = doc.getTextWidth(addr1)
       const addr1X = PAGE_W/2 - addr1W/2

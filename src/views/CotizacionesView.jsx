@@ -24,10 +24,11 @@ import CustomSelect      from '../components/ui/CustomSelect'
 import Skeleton          from '../components/ui/Skeleton'
 import { useVendedores } from '../hooks/useClientes'
 import { useFormasPago } from '../hooks/useFormasPago'
+import { useSaldoFavorOrigen } from '../hooks/useCuentasCobrar'
 import { useTransportistas, useCrearTransportista } from '../hooks/useTransportistas'
 import VendedorFilterPill from '../components/ui/VendedorFilterPill'
 import ToggleVistaPersonal from '../components/ui/ToggleVistaPersonal'
-import { fmtUsdSimple as fmtUsd, fmtBs, usdToBs } from '../utils/format'
+import { fmtUsdSimple as fmtUsd, fmtBs, usdToBs, removeAccents } from '../utils/format'
 import { showToast } from '../components/ui/Toast'
 import { round2 } from '../utils/dinero'
 import { notifyFacturacionClienteAjeno } from '../services/notificationService'
@@ -38,7 +39,7 @@ import { getAction } from '../utils/cotizacionActions'
 import ClienteFacturaBuscador from '../components/clientes/ClienteFacturaBuscador'
 import TransportistaFormCompact from '../components/transportistas/TransportistaFormCompact'
 import { ESTADOS, getCiudades } from '../data/venezuelaGeo'
-import { MapPin, Building } from 'lucide-react'
+import { MapPin, Building, DollarSign } from 'lucide-react'
 
 // ─── Filtros de estado ────────────────────────────────────────────────────────
 const ESTADOS_FILTRO = [
@@ -115,7 +116,7 @@ import { FORMAS_PAGO } from '../constants/formasPago'
 
 
 function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 }) {
-  const { data: detalle, isError: detalleError } = useCotizacion(cotizacion?.id)
+  const { data: detalle } = useCotizacion(cotizacion?.id)
   const { data: clientes = [] } = useClientes()
   const [transportistaId, setTransportistaId] = useState('')
   const [fleteUsd, setFleteUsd] = useState('')
@@ -135,9 +136,9 @@ function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 })
   const [showNuevoTransp, setShowNuevoTransp] = useState(false)
   const [transpError, setTranspError] = useState('')
   const [esCod, setEsCod] = useState(false)
+  const [vueltoComoSaldoFavor, setVueltoComoSaldoFavor] = useState(false)
 
   const perfil = useAuthStore(useCallback(s => s.perfil, []))
-  const offline = useAuthStore(useCallback(s => s.offline, []))
 
   const billingCliente = useMemo(() => {
     return clienteFacturaId
@@ -153,15 +154,11 @@ function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 })
     )
   }, [billingCliente, perfil])
 
-  const items = detalle?.items?.length ? detalle.items : (cotizacion?.items || [])
+  const items = detalle?.items ?? []
 
   // Fetch stock for items when they load
   useEffect(() => {
     if (items.length === 0) return
-    if (offline || !navigator.onLine) {
-      setStockMap({})
-      return
-    }
     const productIds = [...new Set(items.map(i => i.producto_id).filter(Boolean))]
     if (productIds.length === 0) return
     let cancelled = false
@@ -170,9 +167,11 @@ function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 })
         if (!cancelled && data) setStockMap(Object.fromEntries(data.map(p => [p.id, p.stock_actual])))
       })
     return () => { cancelled = true }
-  }, [detalle, offline, items.length])
+  }, [detalle])
   const totalSinFlete = Number(cotizacion?.total_usd || 0) - Number(cotizacion?.costo_envio_usd || 0) - Number(cotizacion?.corte_usd || 0)
   const totalConFlete = totalSinFlete + Number(fleteUsd || 0) + Number(corteUsd || 0)
+
+  const { data: saldoFavorOrigen } = useSaldoFavorOrigen(billingCliente?.id)
 
   const {
     formasPago: pagosInmediatos,
@@ -183,7 +182,51 @@ function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 })
     resetFormas: resetPagosInmediatos,
     totalAsignado: totalInmediato,
     pagoCuadrado: pagoInmediatoCuadrado,
+    hayVuelto: pagosInmediatosHayVuelto,
+    diferencia: pagosInmediatosDiferencia,
   } = useFormasPago(totalConFlete)
+
+  const handleTogglePagoInmediato = (metodo) => {
+    if (metodo === 'Saldo a Favor') {
+      const active = pagosInmediatos.some(f => f.metodo === 'Saldo a Favor')
+      if (!active) {
+        togglePagoInmediato('Saldo a Favor')
+        setTimeout(() => {
+          const available = Number(billingCliente?.saldo_a_favor || 0)
+          const actualAsignado = pagosInmediatos.reduce((s, fp) => s + (Number(fp.monto) || 0), 0)
+          const restante = totalConFlete - actualAsignado
+          const montoInicial = Math.min(restante > 0 ? restante : 0, available)
+          updatePagoInmediato('Saldo a Favor', {
+            monto: Number(montoInicial.toFixed(2)) || '',
+            forma_pago_origen: saldoFavorOrigen || 'Crédito'
+          })
+        }, 50)
+        return
+      }
+    }
+    togglePagoInmediato(metodo)
+  }
+
+  const handleSetMontoPagoInmediato = (metodo, val) => {
+    if (metodo === 'Saldo a Favor') {
+      const maxVal = Number(billingCliente?.saldo_a_favor || 0)
+      let numVal = Number(val)
+      if (numVal > maxVal) {
+        val = String(maxVal)
+      }
+    }
+    if (metodo === 'Cta por cobrar') {
+      const sumOthers = pagosInmediatos
+        .filter(p => p.metodo !== 'Cta por cobrar')
+        .reduce((sum, p) => sum + (Number(p.monto) || 0), 0)
+      const maxVal = Math.max(0, totalConFlete - sumOthers)
+      let numVal = Number(val)
+      if (numVal > maxVal) {
+        val = String(maxVal)
+      }
+    }
+    setMontoPagoInmediato(metodo, val)
+  }
 
   // El monto COD requerido es el total restante
   const montoCodRequerido = Math.max(0, round2(totalConFlete - totalInmediato))
@@ -208,9 +251,16 @@ function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 })
   );
 
   const formasPagoFinales = useMemo(() => {
+    const inyectarVuelto = (fps) => {
+      if (pagosInmediatosHayVuelto && vueltoComoSaldoFavor) {
+        return fps.map((fp, i) => i === 0 ? { ...fp, vuelto_a_favor: true } : fp)
+      }
+      return fps
+    }
+
     if (esCod) {
       return [
-        ...pagosInmediatos,
+        ...inyectarVuelto(pagosInmediatos),
         {
           metodo: "Cobro a destino",
           monto: montoCodRequerido,
@@ -220,9 +270,9 @@ function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 })
         }
       ]
     } else {
-      return pagosInmediatos
+      return inyectarVuelto(pagosInmediatos)
     }
-  }, [esCod, pagosInmediatos, propuestaCod, totalConFlete, totalInmediato, montoCodRequerido])
+  }, [esCod, pagosInmediatos, propuestaCod, totalConFlete, totalInmediato, montoCodRequerido, pagosInmediatosHayVuelto, vueltoComoSaldoFavor])
 
   const handleToggleCod = () => {
     setEsCod(prev => {
@@ -281,13 +331,9 @@ function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 })
           <div className="lg:flex-1 min-h-0 overflow-y-auto p-4 lg:p-5 space-y-3 border-b lg:border-b-0 lg:border-r border-slate-100">
 
             {/* Lista tipo recibo compacta */}
-            {items.length === 0 && !detalleError && !offline ? (
+            {items.length === 0 ? (
               <div className="flex items-center justify-center py-10">
                 <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-              </div>
-            ) : items.length === 0 ? (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                No hay artículos guardados localmente para esta cotización. Conéctate una vez para descargar el detalle antes de despacharla offline.
               </div>
             ) : (
               <div className="space-y-2">
@@ -475,21 +521,32 @@ function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 })
                     return (
                       <div key={fp.metodo} className="flex flex-col gap-1">
                         <div className="flex items-center gap-0 rounded-lg border border-indigo-300 bg-indigo-50 overflow-hidden">
-                          <button type="button" onClick={() => togglePagoInmediato(fp.metodo)}
+                          <button type="button" onClick={() => handleTogglePagoInmediato(fp.metodo)}
                             className="flex items-center gap-0.5 px-2 py-1.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition-colors shrink-0 border-r border-indigo-200">
-                            {fp.metodo} <X size={9} className="ml-0.5" />
+                            {fp.metodo === 'Saldo a Favor'
+                              ? `Saldo a Favor (${(fp.forma_pago_origen || 'Crédito').toUpperCase()})`
+                              : fp.metodo} <X size={9} className="ml-0.5" />
                           </button>
                           <div className="relative flex items-center">
                             <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-indigo-400 text-[10px]">$</span>
                             <input type="number" min="0" step="0.01" value={fp.monto}
-                              onChange={e => setMontoPagoInmediato(fp.metodo, e.target.value)}
+                              onChange={e => handleSetMontoPagoInmediato(fp.metodo, e.target.value)}
                               onFocus={e => e.target.select()}
                               placeholder="0"
                               className="w-16 pl-4 pr-1 py-1.5 text-xs font-semibold text-indigo-800 bg-transparent focus:outline-none focus:bg-white/60"
                               disabled={cargando} />
                             {restante > 0.01 && (
                               <button type="button"
-                                onClick={() => setMontoPagoInmediato(fp.metodo, Number(((Number(fp.monto) || 0) + restante).toFixed(2)))}
+                                onClick={() => {
+                                  let amountToAssign = (Number(fp.monto) || 0) + restante
+                                  if (fp.metodo === 'Saldo a Favor') {
+                                    const available = Number(billingCliente?.saldo_a_favor || 0)
+                                    if (amountToAssign > available) {
+                                      amountToAssign = available
+                                    }
+                                  }
+                                  handleSetMontoPagoInmediato(fp.metodo, Number(amountToAssign.toFixed(2)))
+                                }}
                                 className="mr-1 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700 bg-emerald-100 hover:bg-emerald-200 rounded transition-colors shrink-0"
                                 title={`Completar con $${restante.toFixed(2)} restante`}>
                                 Restante
@@ -514,28 +571,89 @@ function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 })
                             />
                           </div>
                         )}
+
+                        {/* Opción de Referencia para Transferencia y Pago Móvil */}
+                        {['Transf. / Pago Móvil', 'Transferencia', 'Pago Móvil'].includes(fp.metodo) && (
+                          <div className="flex items-center gap-1.5 px-2 py-1 bg-teal-50 border border-teal-200 rounded-lg ml-2">
+                            <span className="text-[10px] font-medium text-teal-700 whitespace-nowrap">
+                              Referencia (opcional):
+                            </span>
+                            <input
+                              type="text"
+                              value={fp.referencia ?? ''}
+                              onChange={e => updatePagoInmediato(fp.metodo, { referencia: e.target.value })}
+                              placeholder="Ej: 12345"
+                              className="w-24 px-1.5 py-0.5 rounded text-[10px] font-semibold border border-teal-200 bg-white focus:outline-none focus:ring-1 focus:ring-teal-400 text-slate-700 text-center"
+                            />
+                          </div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
 
                 {/* Chips para agregar métodos inmediatos */}
-                {FORMAS_PAGO.filter(m => m !== 'Cobro a destino' && (m !== 'Donación' || perfil?.rol !== 'vendedor'))
-                  .some(m => !pagosInmediatos.some(f => f.metodo === m)) && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {FORMAS_PAGO.filter(m => m !== 'Cobro a destino' && (m !== 'Donación' || perfil?.rol !== 'vendedor'))
-                      .filter(m => !pagosInmediatos.some(f => f.metodo === m))
-                      .map(m => (
-                        <button key={m} type="button" onClick={() => togglePagoInmediato(m)}
-                          className="px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-slate-200 bg-white text-slate-600 hover:border-indigo-300 hover:text-indigo-600 transition-all active:scale-95">
-                          {m}
-                        </button>
-                      ))}
-                  </div>
-                )}
+                <div className="flex flex-wrap gap-1.5">
+                  {/* Chip especial para Saldo a Favor */}
+                  {Number(billingCliente?.saldo_a_favor || 0) > 0 && !pagosInmediatos.some(f => f.metodo === 'Saldo a Favor') && (
+                    <button
+                      type="button"
+                      onClick={() => handleTogglePagoInmediato('Saldo a Favor')}
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-black border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 transition-all duration-200 shadow-sm active:scale-95 flex items-center gap-0.5"
+                    >
+                      Saldo a Favor (${Number(billingCliente.saldo_a_favor).toFixed(2)})
+                    </button>
+                  )}
+
+                  {FORMAS_PAGO.filter(m => m !== 'Cobro a destino' && (m !== 'Donación' || perfil?.rol !== 'vendedor'))
+                    .filter(m => m !== 'Saldo a Favor')
+                    .filter(m => !pagosInmediatos.some(f => f.metodo === m))
+                    .map(m => (
+                      <button key={m} type="button" onClick={() => handleTogglePagoInmediato(m)}
+                        className="px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-slate-200 bg-white text-slate-600 hover:border-indigo-300 hover:text-indigo-600 transition-all active:scale-95">
+                        {m}
+                      </button>
+                    ))}
+                </div>
 
                 {esCod && pagosInmediatos.length === 0 && (
                   <p className="text-[11px] text-slate-400 italic">No se registraron adelantos inmediatos.</p>
+                )}
+
+                {/* Banner de Vuelto / Excedente a Saldo a Favor */}
+                {pagosInmediatosHayVuelto && (
+                  <div className="mt-3 bg-indigo-50 border border-indigo-200 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm animate-in fade-in duration-200">
+                    <div className="flex items-start gap-2">
+                      <span className="p-1 rounded-lg bg-indigo-100 text-indigo-600 shrink-0 mt-0.5">
+                        <DollarSign size={14} />
+                      </span>
+                      <div>
+                        <span className="text-[11px] font-black text-indigo-900 block">
+                          El pago supera el total por ${pagosInmediatosDiferencia.toFixed(2)}
+                        </span>
+                        <span className="text-[10px] text-indigo-600 font-bold leading-normal">
+                          ¿Qué deseas hacer con la diferencia? {tasa > 0 && `(Equivale a ${fmtBs(pagosInmediatosDiferencia * tasa)})`}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                      <span className="text-[10px] font-bold text-slate-500">Vuelto Físico</span>
+                      <button
+                        type="button"
+                        onClick={() => setVueltoComoSaldoFavor(!vueltoComoSaldoFavor)}
+                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          vueltoComoSaldoFavor ? 'bg-indigo-600' : 'bg-slate-200'
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                            vueltoComoSaldoFavor ? 'translate-x-4' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                      <span className="text-[10px] font-black text-indigo-700">Saldo a Favor</span>
+                    </div>
+                  </div>
                 )}
               </div>
 
@@ -582,6 +700,21 @@ function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 })
                                   )}
                                 </div>
                               </div>
+                              {/* Opción de Referencia para Transferencia y Pago Móvil COD */}
+                              {['Transf. / Pago Móvil', 'Transferencia', 'Pago Móvil'].includes(fp.metodo) && (
+                                <div className="flex items-center gap-1.5 px-2 py-1 bg-rose-50 border border-rose-200 rounded-lg ml-2 mt-1">
+                                  <span className="text-[10px] font-medium text-rose-700 whitespace-nowrap">
+                                    Referencia (opcional):
+                                  </span>
+                                  <input
+                                    type="text"
+                                    value={fp.referencia ?? ''}
+                                    onChange={e => updatePropuestaCod(fp.metodo, { referencia: e.target.value })}
+                                    placeholder="Ej: 12345"
+                                    className="w-24 px-1.5 py-0.5 rounded text-[10px] font-semibold border border-rose-200 bg-white focus:outline-none focus:ring-1 focus:ring-rose-400 text-slate-700 text-center"
+                                  />
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -775,8 +908,7 @@ function ModalDespachar({ cotizacion, onConfirm, onCancel, cargando, tasa = 0 })
                   clienteFacturaId || null,
                   direccionEnvioActiva ? direccionEnvioDireccion : null,
                   direccionEnvioActiva ? direccionEnvioCiudad : null,
-                  direccionEnvioActiva ? direccionEnvioEstado : null,
-                  detalle || { ...cotizacion, items }
+                  direccionEnvioActiva ? direccionEnvioEstado : null
                 )
               }} disabled={
                 cargando ||
@@ -896,14 +1028,14 @@ function ListaCotizaciones({ onNueva, onEditar, despacharCotizacion }) {
     }
 
     if (busquedaGlobal) {
-      const q = busquedaGlobal.toLowerCase()
+      const q = removeAccents(busquedaGlobal.toLowerCase())
       const qClean = q.replace(/[\.\-\s]/g, '')
       filtered = filtered.filter(c => {
         const numStr = `cot-${String(c.numero).padStart(5, '0')}`
-        const clienteNombre = (c.cliente?.nombre || '').toLowerCase()
-        const clienteRif = (c.cliente?.rif_cedula || '').toLowerCase()
+        const clienteNombre = removeAccents(c.cliente?.nombre || '').toLowerCase()
+        const clienteRif = removeAccents(c.cliente?.rif_cedula || '').toLowerCase()
         const clienteRifClean = clienteRif.replace(/[\.\-\s]/g, '')
-        const clienteCodigo = (c.cliente?.codigo_cliente || '').toLowerCase()
+        const clienteCodigo = removeAccents(c.cliente?.codigo_cliente || '').toLowerCase()
         const totalStr = String(c.total_usd)
         
         return numStr.includes(q) || 
@@ -960,12 +1092,11 @@ function ListaCotizaciones({ onNueva, onEditar, despacharCotizacion }) {
     setCotizacionAAnular(null)
   }
 
-  async function confirmarDespachar(formaPago = '', transportistaId = null, fleteUsd = 0, corteUsd = 0, referenciaPago = '', formaPagoCliente = '', notas = '', clienteFacturaId = null, dirEnvio = null, ciudadEnvio = null, estadoEnvio = null, detalleCotizacion = null) {
+  async function confirmarDespachar(formaPago = '', transportistaId = null, fleteUsd = 0, corteUsd = 0, referenciaPago = '', formaPagoCliente = '', notas = '', clienteFacturaId = null, dirEnvio = null, ciudadEnvio = null, estadoEnvio = null) {
     if (!cotizacionADespachar) return
     try {
       await crearDespacho.mutateAsync({
         cotizacionId: cotizacionADespachar.id,
-        cotizacionSnapshot: detalleCotizacion || cotizacionADespachar,
         numeroCotizacion: cotizacionADespachar.numero,
         clienteNombre: cotizacionADespachar.cliente?.nombre,
         formaPago: formaPago || null,

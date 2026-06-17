@@ -1,6 +1,6 @@
 // src/components/inventario/KardexModal.jsx
 // Kardex profesional — historial completo de movimientos de un producto
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { Modal } from '../ui/Modal'
 import {
   ArrowDownToLine, ArrowUpFromLine, Clock, Package, Hash,
@@ -40,6 +40,116 @@ function SummaryCard({ icon: Icon, label, value, color, suffix }) {
         {typeof value === 'number' ? value.toLocaleString('es-VE') : value}
         {suffix && <span className="text-xs font-medium ml-1 opacity-60">{suffix}</span>}
       </p>
+    </div>
+  )
+}
+
+// ── Fila de Movimiento ──────────────────────────────────────────────────────
+function KardexRow({ m, idx, isExpanded, onToggle }) {
+  const esIngreso = m.tipo === 'ingreso'
+  const motivoCfg = MOTIVOS_TIPO[m.motivo_tipo] || MOTIVOS_TIPO.otro
+  const motivoColors = getMotivoChipClasses(m.motivo_tipo)
+  
+  const textRef = useRef(null)
+  const [isTruncated, setIsTruncated] = useState(false)
+  const [isMobile, setIsMobile] = useState(false)
+
+  const checkState = useCallback(() => {
+    setIsMobile(window.innerWidth < 640)
+    if (textRef.current) {
+      setIsTruncated(textRef.current.scrollWidth > textRef.current.offsetWidth)
+    }
+  }, [])
+
+  useEffect(() => {
+    checkState()
+    window.addEventListener('resize', checkState)
+    return () => window.removeEventListener('resize', checkState)
+  }, [m.motivo, checkState])
+
+  const tieneMotivo = !!m.motivo
+  const canExpand = tieneMotivo && (isMobile || isTruncated || isExpanded)
+
+  return (
+    <div>
+      <div
+        className={`grid grid-cols-[75px_1fr_60px_70px_70px] sm:grid-cols-[85px_1.2fr_80px_70px_70px_150px_1.5fr] gap-2 px-4 py-3 transition-colors items-center ${
+          canExpand ? 'cursor-pointer hover:bg-slate-50/60' : 'cursor-default'
+        } ${
+          idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'
+        }`}
+        onClick={() => canExpand && onToggle(m.id)}
+      >
+        {/* Correlativo */}
+        <span className="text-[11px] font-mono font-bold text-slate-600">
+          {formatCorrelativo(m.numero)}
+        </span>
+
+        {/* Fecha + Usuario */}
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <Clock size={10} className="text-slate-300 shrink-0" />
+            <span className="text-[11px] text-slate-500 truncate">{formatFecha(m.creado_en)}</span>
+          </div>
+          <div className="flex items-center gap-1.5 ml-3.5 mt-0.5">
+            {m.usuario_color && (
+              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: m.usuario_color }} />
+            )}
+            <User size={10} className="text-slate-400 shrink-0" />
+            <span className="text-[10.5px] font-medium text-slate-600 truncate">{m.usuario_nombre || 'Sin usuario'}</span>
+          </div>
+        </div>
+
+        {/* Tipo */}
+        <div className="flex justify-center">
+          <span className={`inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+            esIngreso ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+          }`}>
+            {esIngreso
+              ? <ArrowDownToLine size={9} />
+              : <ArrowUpFromLine size={9} />
+            }
+            <span className="hidden sm:inline">{esIngreso ? 'Ingreso' : 'Egreso'}</span>
+            <span className="sm:hidden">{esIngreso ? 'Ing' : 'Egr'}</span>
+          </span>
+        </div>
+
+        {/* Cantidad */}
+        <span className={`text-sm font-bold text-right ${esIngreso ? 'text-emerald-600' : 'text-red-600'}`}>
+          {esIngreso ? '+' : '-'}{Number(m.cantidad).toLocaleString('es-VE')}
+        </span>
+
+        {/* Saldo */}
+        <span className="text-sm font-bold text-slate-700 text-right">
+          {Number(m.stock_nuevo).toLocaleString('es-VE')}
+        </span>
+
+        {/* Categoría */}
+        <div className="hidden sm:flex justify-center min-w-0">
+          <span className={`inline-flex items-center gap-1 text-[9.5px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap overflow-hidden max-w-full ${motivoColors.bg} ${motivoColors.text} ${motivoColors.border}`}>
+            <span className={`w-1 h-1 rounded-full shrink-0 ${motivoColors.dot}`} />
+            <span className="truncate">{motivoCfg.label}</span>
+          </span>
+        </div>
+
+        {/* Motivo */}
+        <div className="hidden sm:flex items-center gap-1 min-w-0">
+          <span ref={textRef} className="text-[11px] font-medium text-slate-500 truncate flex-1">{m.motivo || '—'}</span>
+          {tieneMotivo && (isTruncated || isExpanded) && (
+            isExpanded
+              ? <ChevronUp size={10} className="text-slate-400 shrink-0" />
+              : <ChevronDown size={10} className="text-slate-400 shrink-0" />
+          )}
+        </div>
+      </div>
+
+      {/* Motivo expandido (mobile + desktop con texto largo) */}
+      {isExpanded && (
+        <div className="px-4 py-2.5 bg-slate-50/50 border-t border-slate-100/80 flex flex-col gap-1">
+          <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Motivo completo:</span>
+          <p className="text-xs text-slate-600 leading-relaxed break-words whitespace-pre-wrap">{m.motivo}</p>
+        </div>
+      )}
     </div>
   )
 }
@@ -86,7 +196,7 @@ export default function KardexModal({ isOpen, onClose, producto }) {
   if (!producto) return null
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Kardex" className="!max-w-2xl sm:!max-w-4xl">
+    <Modal isOpen={isOpen} onClose={onClose} title="Kardex" className="!max-w-2xl sm:!max-w-[95vw] sm:!max-h-[94vh]">
       <div className="space-y-4">
 
         {/* ── Encabezado del producto ─────────────────────────────────────── */}
@@ -179,94 +289,16 @@ export default function KardexModal({ isOpen, onClose, producto }) {
             </div>
 
             {/* Filas */}
-            <div className="max-h-[400px] overflow-y-auto custom-scrollbar divide-y divide-slate-50">
-              {movimientosFiltrados.map((m, idx) => {
-                const esIngreso = m.tipo === 'ingreso'
-                const motivoCfg = MOTIVOS_TIPO[m.motivo_tipo] || MOTIVOS_TIPO.otro
-                const motivoColors = getMotivoChipClasses(m.motivo_tipo)
-                const isExpanded = expandedRows.has(m.id)
-                const motivoLargo = m.motivo && m.motivo.length > 40
-
-                return (
-                  <div key={m.id}>
-                    <div
-                      className={`grid grid-cols-[75px_1fr_60px_70px_70px] sm:grid-cols-[85px_1.2fr_80px_70px_70px_150px_1.5fr] gap-2 px-4 py-3 hover:bg-slate-50/60 transition-colors items-center cursor-pointer ${
-                        idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'
-                      }`}
-                      onClick={() => motivoLargo && toggleRow(m.id)}
-                    >
-                      {/* Correlativo */}
-                      <span className="text-[11px] font-mono font-bold text-slate-600">
-                        {formatCorrelativo(m.numero)}
-                      </span>
-
-                      {/* Fecha + Usuario */}
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <Clock size={10} className="text-slate-300 shrink-0" />
-                          <span className="text-[11px] text-slate-500 truncate">{formatFecha(m.creado_en)}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 ml-3.5 mt-0.5">
-                          {m.usuario_color && (
-                            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: m.usuario_color }} />
-                          )}
-                          <User size={10} className="text-slate-400 shrink-0" />
-                          <span className="text-[10.5px] font-medium text-slate-600 truncate">{m.usuario_nombre || 'Sin usuario'}</span>
-                        </div>
-                      </div>
-
-                      {/* Tipo */}
-                      <div className="flex justify-center">
-                        <span className={`inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                          esIngreso ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                        }`}>
-                          {esIngreso
-                            ? <ArrowDownToLine size={9} />
-                            : <ArrowUpFromLine size={9} />
-                          }
-                          <span className="hidden sm:inline">{esIngreso ? 'Ingreso' : 'Egreso'}</span>
-                          <span className="sm:hidden">{esIngreso ? 'Ing' : 'Egr'}</span>
-                        </span>
-                      </div>
-
-                      {/* Cantidad */}
-                      <span className={`text-sm font-bold text-right ${esIngreso ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {esIngreso ? '+' : '-'}{Number(m.cantidad).toLocaleString('es-VE')}
-                      </span>
-
-                      {/* Saldo */}
-                      <span className="text-sm font-bold text-slate-700 text-right">
-                        {Number(m.stock_nuevo).toLocaleString('es-VE')}
-                      </span>
-
-                      {/* Categoría */}
-                      <div className="hidden sm:flex justify-center min-w-0">
-                        <span className={`inline-flex items-center gap-1 text-[9.5px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap overflow-hidden max-w-full ${motivoColors.bg} ${motivoColors.text} ${motivoColors.border}`}>
-                          <span className={`w-1 h-1 rounded-full shrink-0 ${motivoColors.dot}`} />
-                          <span className="truncate">{motivoCfg.label}</span>
-                        </span>
-                      </div>
-
-                      {/* Motivo */}
-                      <div className="hidden sm:flex items-center gap-1 min-w-0">
-                        <span className="text-[11px] font-medium text-slate-500 truncate">{m.motivo || '—'}</span>
-                        {motivoLargo && (
-                          isExpanded
-                            ? <ChevronUp size={10} className="text-slate-300 shrink-0" />
-                            : <ChevronDown size={10} className="text-slate-300 shrink-0" />
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Motivo expandido (mobile + desktop con texto largo) */}
-                    {isExpanded && (
-                      <div className="px-4 py-2 bg-slate-50/50 border-t border-slate-100">
-                        <p className="text-xs text-slate-500">{m.motivo}</p>
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
+            <div className="max-h-[400px] sm:max-h-[58vh] overflow-y-auto custom-scrollbar divide-y divide-slate-50">
+              {movimientosFiltrados.map((m, idx) => (
+                <KardexRow
+                  key={m.id}
+                  m={m}
+                  idx={idx}
+                  isExpanded={expandedRows.has(m.id)}
+                  onToggle={toggleRow}
+                />
+              ))}
             </div>
 
             {/* Resumen footer */}

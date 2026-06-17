@@ -6,8 +6,8 @@ import { TIPS } from '../../utils/onboardingConfig'
 
 import useAuthStore from '../../store/useAuthStore'
 
-const STORAGE_KEY_BASE = 'construacero_onboarding_done'
-const TIPS_KEY_BASE = 'construacero_tips_shown'
+const STORAGE_KEY_BASE = 'listopos_onboarding_done'
+const TIPS_KEY_BASE = 'listopos_tips_shown'
 
 function getKeys() {
   const businessId = useAuthStore.getState().user?.id

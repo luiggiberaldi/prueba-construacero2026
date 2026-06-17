@@ -6,9 +6,10 @@ import {
   Filter, ChevronLeft, ChevronRight, Shield, Zap, Bug, Clock,
   Monitor, Server, Database, CheckCircle2, XCircle, Activity, FlaskConical,
   Users, FileText, ShoppingCart, Settings, LogIn, TrendingUp, BarChart3,
-  Search, Calendar,
+  Search, Calendar, MessageSquare,
 } from 'lucide-react'
 import { useLogs, useLogStats, useLogAnalysis, useLogPurge } from '../hooks/useLogs'
+import { useBuzonAdmin, useMarcarBuzon, useEliminarBuzon } from '../hooks/useBuzon'
 import { adminAPI, devAPI } from '../services/supabase/adminClient'
 import useAuthStore from '../store/useAuthStore'
 import CustomSelect from '../components/ui/CustomSelect'
@@ -26,6 +27,7 @@ const TABS_DEV = [
   { id: 'audit', label: 'Auditoría', icon: Shield },
   { id: 'tests',  label: 'Tests', icon: FlaskConical },
   { id: 'health', label: 'Health', icon: Activity },
+  { id: 'buzon',  label: 'Buzón', icon: MessageSquare },
 ]
 
 const NIVELES = [
@@ -445,6 +447,19 @@ export default function LogsView() {
   const { data: stats, refetch: refetchStats } = useLogStats()
   const purge = useLogPurge()
 
+  // Buzon State & Data
+  const [buzonFiltroEstado, setBuzonFiltroEstado] = useState('')
+  const [buzonFiltroTipo, setBuzonFiltroTipo] = useState('')
+  const [editNotaId, setEditNotaId] = useState(null)
+  const [notaText, setNotaText] = useState('')
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null)
+
+  const { data: buzonMensajes = [], isLoading: buzonLoading } = useBuzonAdmin()
+  const marcarBuzon = useMarcarBuzon()
+  const eliminarBuzon = useEliminarBuzon()
+
+  const unreadCount = buzonMensajes.filter(m => m.estado === 'pendiente').length
+
   const logs = logsData?.logs || []
   const totalPages = logsData?.pages || 1
 
@@ -531,7 +546,7 @@ export default function LogsView() {
   }, [auditPage, auditCategoria])
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="p-3 sm:p-4 md:p-5 lg:p-6 pb-24 lg:pb-6 space-y-4">
       <PageHeader
         icon={AlertCircle}
         title="System Logs"
@@ -540,7 +555,7 @@ export default function LogsView() {
 
       {/* Stats */}
       {stats && (
-        <div className="grid grid-cols-3 gap-3 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <StatCard label="Total logs" value={stats.total} icon={Database} color="#64748b" />
           <StatCard label="Errores hoy" value={stats.erroresHoy} icon={AlertCircle} color="#ef4444" />
           <StatCard label="Warnings hoy" value={stats.warningsHoy} icon={AlertTriangle} color="#f59e0b" />
@@ -556,10 +571,15 @@ export default function LogsView() {
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-bold transition-all ${active ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-bold transition-all relative ${active ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
             >
               <Icon size={14} />
               {t.label}
+              {t.id === 'buzon' && unreadCount > 0 && (
+                <span className="absolute -top-1 right-2 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] font-black text-white shadow-sm border border-white/20 animate-pulse">
+                  {unreadCount}
+                </span>
+              )}
             </button>
           )
         })}
@@ -676,15 +696,17 @@ export default function LogsView() {
           <p className="text-xs text-slate-500 mb-2">
             Usa los agentes AI para analizar los logs del sistema. Cada agente se especializa en un área distinta y usa Groq (Llama 3.3 70B) con round-robin de API keys para proteger la cuota.
           </p>
-          {AI_AGENTS.map(agent => (
-            <AIAnalysisCard
-              key={agent.tipo}
-              agent={agent}
-              onRun={handleRunAI}
-              result={aiResults[agent.tipo]}
-              isLoading={aiLoading[agent.tipo]}
-            />
-          ))}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {AI_AGENTS.map(agent => (
+              <AIAnalysisCard
+                key={agent.tipo}
+                agent={agent}
+                onRun={handleRunAI}
+                result={aiResults[agent.tipo]}
+                isLoading={aiLoading[agent.tipo]}
+              />
+            ))}
+          </div>
 
           {/* Top categorías */}
           {stats?.topCategorias?.length > 0 && (
@@ -969,6 +991,208 @@ export default function LogsView() {
         </div>
       )}
 
+      {/* Tab: Buzón (solo desarrollador) */}
+      {tab === 'buzon' && esDesarrollador && (
+        <div className="space-y-4">
+          <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 text-left">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-black text-slate-800">📬 Buzón de Sugerencias & Quejas</h3>
+                <p className="text-xs text-slate-500 mt-0.5 font-medium">Mensajes recibidos de los operadores para soporte y mejora continua</p>
+              </div>
+              
+              {/* Filtros */}
+              <div className="flex gap-2">
+                <CustomSelect
+                  value={buzonFiltroEstado}
+                  onChange={setBuzonFiltroEstado}
+                  placeholder="Todos los estados"
+                  clearable
+                  options={[
+                    { value: 'pendiente', label: 'Pendiente 🟡' },
+                    { value: 'leido', label: 'Leído 🔵' },
+                    { value: 'resuelto', label: 'Resuelto ✅' },
+                  ]}
+                />
+                <CustomSelect
+                  value={buzonFiltroTipo}
+                  onChange={setBuzonFiltroTipo}
+                  placeholder="Todos los tipos"
+                  clearable
+                  options={[
+                    { value: 'sugerencia', label: 'Sugerencia 💡' },
+                    { value: 'queja', label: 'Queja ⚠️' },
+                    { value: 'error_tecnico', label: 'Error Técnico 🐛' },
+                  ]}
+                />
+              </div>
+            </div>
+
+            {buzonLoading ? (
+              <div className="space-y-2 py-4">
+                {[1,2,3].map(i => <div key={i} className="h-24 bg-slate-50 rounded-xl animate-pulse" />)}
+              </div>
+            ) : buzonMensajes.length === 0 ? (
+              <div className="text-center py-12 text-slate-400">
+                <MessageSquare size={40} className="mx-auto mb-3 opacity-50" />
+                <p className="text-sm font-medium">Buzón vacío</p>
+                <p className="text-xs mt-1">No se han recibido sugerencias o quejas todavía.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {buzonMensajes
+                  .filter(m => !buzonFiltroEstado || m.estado === buzonFiltroEstado)
+                  .filter(m => !buzonFiltroTipo || m.tipo === buzonFiltroTipo)
+                  .map(m => {
+                    const esEditando = editNotaId === m.id
+                    const colorRol = {
+                      vendedor: 'text-teal-600 bg-teal-50 border border-teal-100',
+                      supervisor: 'text-sky-600 bg-sky-50 border border-sky-100',
+                      administracion: 'text-amber-600 bg-amber-50 border border-amber-100',
+                      logistica: 'text-purple-600 bg-purple-50 border border-purple-100',
+                      jefe: 'text-rose-600 bg-rose-50 border border-rose-100',
+                    }[m.usuario?.rol] || 'text-slate-600 bg-slate-50 border border-slate-100'
+
+                    return (
+                      <div
+                        key={m.id}
+                        className={`p-4 border rounded-2xl transition-all shadow-sm ${
+                          m.estado === 'pendiente'
+                            ? 'bg-amber-50/20 border-amber-200'
+                            : 'bg-white border-slate-100'
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          {/* Info Usuario */}
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs text-white"
+                              style={{ backgroundColor: m.usuario?.color || '#1B365D' }}
+                            >
+                              {m.usuario?.nombre?.[0] || 'U'}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-black text-slate-700">{m.usuario?.nombre || 'Usuario Desconocido'}</span>
+                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full capitalize ${colorRol}`}>
+                                  {m.usuario?.rol === 'vendedor_sin_comision' ? 'vendedor' : m.usuario?.rol}
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-slate-400">
+                                {new Date(m.creado_en).toLocaleString('es-VE')}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Tipo & Estado */}
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                              {
+                                sugerencia: 'bg-amber-100 text-amber-800 border border-amber-200',
+                                queja: 'bg-rose-100 text-rose-800 border border-rose-200',
+                                error_tecnico: 'bg-indigo-100 text-indigo-800 border border-indigo-200',
+                              }[m.tipo]
+                            }`}>
+                              {m.tipo === 'error_tecnico' ? 'Error Técnico' : m.tipo}
+                            </span>
+
+                            {/* Acciones de Estado */}
+                            <div className="flex gap-1">
+                              {m.estado !== 'leido' && m.estado !== 'resuelto' && (
+                                <button
+                                  onClick={() => marcarBuzon.mutate({ id: m.id, estado: 'leido' })}
+                                  className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-600 text-[10px] font-black rounded-lg border border-blue-200 transition-colors"
+                                >
+                                  Leer 🔵
+                                </button>
+                              )}
+                              {m.estado !== 'resuelto' && (
+                                <button
+                                  onClick={() => {
+                                    setEditNotaId(m.id)
+                                    setNotaText(m.nota_interna || '')
+                                  }}
+                                  className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 text-[10px] font-black rounded-lg border border-emerald-200 transition-colors"
+                                >
+                                  Resolver ✅
+                                </button>
+                              )}
+                              <button
+                                onClick={() => setDeleteConfirmId(m.id)}
+                                className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 text-[10px] font-black rounded-lg border border-rose-200 transition-colors flex items-center gap-1"
+                              >
+                                <Trash2 size={11} /> Eliminar 🗑️
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Mensaje */}
+                        <div className="mt-3 text-sm text-slate-700 leading-relaxed font-medium bg-slate-50/50 p-3 rounded-xl border border-slate-100">
+                          {m.mensaje}
+                        </div>
+
+                        {/* Nota Interna */}
+                        {!esEditando && m.nota_interna && (
+                          <div className="mt-3 p-3 bg-slate-50 border-l-4 border-slate-400 rounded-r-xl text-xs text-slate-600">
+                            <span className="font-bold text-slate-700 block mb-0.5 uppercase tracking-wider text-[9px]">Nota Interna (Desarrollador):</span>
+                            {m.nota_interna}
+                            <button
+                              onClick={() => {
+                                setEditNotaId(m.id)
+                                setNotaText(m.nota_interna || '')
+                              }}
+                              className="text-blue-500 hover:underline ml-1 font-bold"
+                            >
+                              (Editar)
+                            </button>
+                          </div>
+                        )}
+
+                        {esEditando && (
+                          <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                              Nota Interna o Respuesta al Operador:
+                            </label>
+                            <textarea
+                              value={notaText}
+                              onChange={e => setNotaText(e.target.value)}
+                              placeholder="Escribe detalles del error, solución aplicada o respuesta..."
+                              rows={2}
+                              className="w-full p-2 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-800"
+                            />
+                            <div className="flex justify-end gap-2">
+                              <button
+                                onClick={() => setEditNotaId(null)}
+                                className="px-2.5 py-1 text-xs text-slate-500 hover:bg-slate-100 rounded-lg border border-slate-200 font-medium"
+                              >
+                                Cancelar
+                              </button>
+                              <button
+                                onClick={() => {
+                                  marcarBuzon.mutate(
+                                    { id: m.id, estado: 'resuelto', notaInterna: notaText },
+                                    {
+                                      onSuccess: () => setEditNotaId(null),
+                                    }
+                                  )
+                                }}
+                                className="px-3 py-1 text-xs text-white bg-slate-800 hover:bg-slate-700 rounded-lg font-black"
+                              >
+                                Guardar y Marcar Resuelto
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Purge modal con selección de rango */}
       {confirmPurge && (
         <PurgeModal
@@ -981,6 +1205,22 @@ export default function LogsView() {
           onClose={() => setConfirmPurge(false)}
         />
       )}
+
+      {/* Confirmación de eliminación de sugerencia */}
+      <ConfirmModal
+        isOpen={!!deleteConfirmId}
+        onClose={() => setDeleteConfirmId(null)}
+        onConfirm={async () => {
+          if (deleteConfirmId) {
+            await eliminarBuzon.mutateAsync(deleteConfirmId)
+          }
+        }}
+        title="¿Eliminar sugerencia?"
+        message="Esta acción eliminará permanentemente la sugerencia de la base de datos y no se puede deshacer."
+        confirmText="Sí, eliminar"
+        cancelText="Cancelar"
+        variant="danger"
+      />
     </div>
   )
 }

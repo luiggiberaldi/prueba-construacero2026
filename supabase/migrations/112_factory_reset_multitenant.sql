@@ -12,7 +12,7 @@ BEGIN
   -- En nuestro caso, el worker pasa p_cuenta_id del usuario autenticado.
 
   -- Orden seguro respetando FK constraints
-  DELETE FROM comisiones WHERE cuentaid = p_cuenta_id;
+  DELETE FROM comisiones WHERE cuenta_id = p_cuenta_id;
   DELETE FROM cuentas_por_cobrar WHERE cuenta_id = p_cuenta_id;
   DELETE FROM notas_despacho_items WHERE cuenta_id = p_cuenta_id;
   DELETE FROM notas_despacho WHERE cuenta_id = p_cuenta_id;

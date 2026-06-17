@@ -1,5 +1,4 @@
-// src/services/pdf/facturaPDF.js
-// Genera PDF profesional de Factura — formato Construacero Carabobo
+// Genera PDF profesional de Factura — formato Listo POS
 import { jsPDF } from 'jspdf'
 import { LOGO_DESPACHO } from './logoDespachoBase64'
 import {
@@ -44,9 +43,10 @@ function formatTlfDash(raw) {
   return fmtTelefono(raw)
 }
 
-export async function generarFacturaPDF({ despacho, items = [], config = {}, formaPago = '', monedaPDF = '$', tasa = 0, tasaUsdt = 0, tasaBcv = 0, returnBlob = false, nroFactura = '', nroControl = '' }) {
+export async function generarFacturaPDF({ despacho, items = [], config = {}, formaPago = '', monedaPDF = '$', tasa = 0, tasaUsdt = 0, tasaBcv = 0, returnBlob = false, nroFactura = '', nroControl = '', porcentaje = 100 }) {
   const doc = new jsPDF({ unit: 'mm', format: 'letter', orientation: 'portrait' })
 
+  const factor = Number(porcentaje || 100) / 100
   const factorBcv = (tasaUsdt > 0 && tasaBcv > 0) ? tasaUsdt / tasaBcv : 0
 
   const rif = config.rif_negocio || 'J-50115913-0'
@@ -62,11 +62,13 @@ export async function generarFacturaPDF({ despacho, items = [], config = {}, for
     if (pageNum > 1) {
       const HDR_H = 15
       if (!esMembrete) {
-        try { doc.addImage(LOGO_DESPACHO, 'PNG', MARGIN - 2, 4, 12, 12) } catch (_) {}
+        try { doc.addImage(LOGO_DESPACHO, 'PNG', MARGIN - 2, 4, 12, 12) } catch (_) { /* ignore */ }
         doc.setFont('helvetica', 'bold')
         doc.setFontSize(11)
         doc.setTextColor(...C_DARK)
-        doc.text('CONSTRUACERO CARABOBO, C.A.', MARGIN + 14, 10)
+        let n = config.nombre_negocio || 'Listo POS C.A.'
+        if (!n || n.trim().toUpperCase() === 'PRUEBA' || n.trim() === '') n = 'Listo POS C.A.'
+        doc.text(n.toUpperCase(), MARGIN + 14, 10)
         doc.setFont('helvetica', 'normal')
         doc.setFontSize(9)
         doc.text(`FACTURA N° ${String(nroFactura).padStart(5, '0')}`, PAGE_W - MARGIN, 10, { align: 'right' })
@@ -99,6 +101,8 @@ export async function generarFacturaPDF({ despacho, items = [], config = {}, for
   // ══════════════════════════════════════════════════════════════════════════
   const baseCliente = despacho.cliente_factura || despacho.cliente || {}
   const cliente = { ...baseCliente }
+  const esPersonal = cliente.tipo_cliente === 'personal'
+  const descPersonalPct = esPersonal ? (config.descuento_personal_pct ?? 10) : 0
   if (despacho.direccion_envio_estado || despacho.direccion_envio_ciudad || despacho.direccion_envio_direccion) {
     cliente.estado = despacho.direccion_envio_estado || ''
     cliente.ciudad = despacho.direccion_envio_ciudad || ''
@@ -153,12 +157,14 @@ export async function generarFacturaPDF({ despacho, items = [], config = {}, for
 
   // Si no es membrete, dibujamos el logo y los datos de la empresa arriba del recuadro
   if (!esMembrete) {
-    try { doc.addImage(LOGO_DESPACHO, 'PNG', MARGIN, 11, 15, 15) } catch (_) {}
+    try { doc.addImage(LOGO_DESPACHO, 'PNG', MARGIN, 11, 15, 15) } catch (_) { /* ignore */ }
     
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(11)
     doc.setTextColor(...C_DARK)
-    doc.text('CONSTRUACERO CARABOBO, C.A.', MARGIN + 18, 16)
+    let n = config.nombre_negocio || 'Listo POS C.A.'
+    if (!n || n.trim().toUpperCase() === 'PRUEBA' || n.trim() === '') n = 'Listo POS C.A.'
+    doc.text(n.toUpperCase(), MARGIN + 18, 16)
     
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8.5)
@@ -417,9 +423,25 @@ export async function generarFacturaPDF({ despacho, items = [], config = {}, for
     }
     doc.text(uniText, COLS[3].x + COLS[3].w / 2, midY, { align: 'center' })
 
-    const precioText = fmtPrecioFac(item.precio_unit_usd, monedaPDF, tasa, factorBcv)
-    const totalLinea = item.es_prestamo ? (Number(item.cantidad || 0) * Number(item.precio_unit_usd || 0)) : Number(item.total_linea_usd || 0)
-    const totalText = fmtPrecioFac(totalLinea, monedaPDF, tasa, factorBcv)
+    let precioUnitarioAMostrar = Number(item.precio_unit_usd || 0)
+    let totalLineaAMostrar = item.es_prestamo ? (Number(item.cantidad || 0) * Number(item.precio_unit_usd || 0)) : Number(item.total_linea_usd || 0)
+
+    const isCorte = (item.nombre_snap || '').toUpperCase().includes('CORTE') || (item.codigo_snap || '').startsWith('CRT')
+    const esFleteCorte = isFlete || isCorte
+    const esServicio = isFlete || isCorte || item.tiene_descuento === false
+
+    if (!esFleteCorte) {
+      precioUnitarioAMostrar = precioUnitarioAMostrar * factor
+      totalLineaAMostrar = totalLineaAMostrar * factor
+    }
+
+    if (esPersonal && descPersonalPct > 0 && !item.es_prestamo && !esServicio) {
+      precioUnitarioAMostrar = Math.round((precioUnitarioAMostrar / (1 - descPersonalPct / 100)) * 100) / 100
+      totalLineaAMostrar = precioUnitarioAMostrar * Number(item.cantidad || 0)
+    }
+
+    const precioText = fmtPrecioFac(precioUnitarioAMostrar, monedaPDF, tasa, factorBcv)
+    const totalText = fmtPrecioFac(totalLineaAMostrar, monedaPDF, tasa, factorBcv)
 
     const fitTextCol = (text, col, baseFontSize, bold) => {
       const maxW = col.w - 4
@@ -449,14 +471,16 @@ export async function generarFacturaPDF({ despacho, items = [], config = {}, for
   const sloganY = PAGE_H - 21
 
   // ── Cálculo del IVA (16% sumado) ──
-  const total = items.reduce((acc, it) => acc + (it.es_prestamo ? (Number(it.cantidad || 0) * Number(it.precio_unit_usd || 0)) : Number(it.total_linea_usd || 0)), 0)
+  const totalOriginal = items.reduce((acc, it) => acc + (it.es_prestamo ? (Number(it.cantidad || 0) * Number(it.precio_unit_usd || 0)) : Number(it.total_linea_usd || 0)), 0)
+  const total = totalOriginal * factor
   const flete = Number(despacho.flete_usd || 0)
   const corte = Number(despacho.corte_usd || 0)
   const montoExento = flete + corte
-  const descuentoTotal = Number(despacho.descuento_total_usd || 0)
+  const descuentoTotalOriginal = Number(despacho.descuento_total_usd || 0)
+  const descuentoTotal = descuentoTotalOriginal * factor
   const totalFinal = total - descuentoTotal
 
-  const baseImponible = totalFinal - montoExento  // El total de los productos (después de descuentos, excluyendo flete/corte) es la Base Imponible
+  const baseImponible = totalFinal  // El total de los productos (después de descuentos, excluyendo flete/corte) es la Base Imponible
   const ivaPct = config.iva_pct !== undefined && config.iva_pct !== null ? Number(config.iva_pct) : 16
   const ivaAmount = baseImponible * (ivaPct / 100)  // Se le suma el % de IVA configurado
   const totalFacturaFinal = baseImponible + ivaAmount + montoExento
@@ -471,14 +495,40 @@ export async function generarFacturaPDF({ despacho, items = [], config = {}, for
   // 4. BLOQUE COMBINADO: Crédito + Transporte (izq) | Desglose (der) + TOTAL
   // ══════════════════════════════════════════════════════════════════════════
   // Desglose de totales de factura
-  const rightItems = [
-    { label: 'SubTotal:', value: fmtTotalFac(total, monedaPDF, tasa, factorBcv) },
-    { label: 'Descuento:', value: fmtTotalFac(descuentoTotal, monedaPDF, tasa, factorBcv) },
-    { label: 'Exento:', value: fmtTotalFac(montoExento, monedaPDF, tasa, factorBcv) },
-    { label: 'Base Gravable:', value: fmtTotalFac(baseImponible, monedaPDF, tasa, factorBcv) },
-    { label: `IVA ${ivaPct}%:`, value: fmtTotalFac(ivaAmount, monedaPDF, tasa, factorBcv) },
-    { label: 'IGTF 3%:', value: fmtTotalFac(0, monedaPDF, tasa, factorBcv) }
-  ]
+  let subtotalOriginal = total
+  let descuentoPersonal = 0
+
+  if (esPersonal && descPersonalPct > 0) {
+    let sumOriginal = 0
+    items.forEach(it => {
+      if (!it.es_prestamo) {
+        const cant = Number(it.cantidad || 0)
+        const precio = Number(it.precio_unit_usd || 0) * factor
+        const precioOrig = Math.round((precio / (1 - descPersonalPct / 100)) * 100) / 100
+        sumOriginal += precioOrig * cant
+      }
+    })
+    subtotalOriginal = sumOriginal
+    descuentoPersonal = Math.max(0, subtotalOriginal - total)
+  }
+
+  const rightItems = []
+  if (esPersonal && descPersonalPct > 0) {
+    rightItems.push({ label: 'SubTotal:', value: fmtTotalFac(subtotalOriginal, monedaPDF, tasa, factorBcv) })
+    rightItems.push({ label: `Desc. Personal (${descPersonalPct}%):`, value: '-' + fmtTotalFac(descuentoPersonal, monedaPDF, tasa, factorBcv), color: [180, 100, 0] })
+  } else {
+    rightItems.push({ label: 'SubTotal:', value: fmtTotalFac(total, monedaPDF, tasa, factorBcv) })
+  }
+
+  if (hasDescuento) {
+    rightItems.push({ label: 'Descuento:', value: '-' + fmtTotalFac(descuentoTotal, monedaPDF, tasa, factorBcv), color: [220, 38, 38] })
+  }
+  if (hasExento) {
+    rightItems.push({ label: 'Exento:', value: fmtTotalFac(montoExento, monedaPDF, tasa, factorBcv), color: [50, 100, 180] })
+  }
+  rightItems.push({ label: 'Base Gravable:', value: fmtTotalFac(baseImponible, monedaPDF, tasa, factorBcv) })
+  rightItems.push({ label: `IVA ${ivaPct}%:`, value: fmtTotalFac(ivaAmount, monedaPDF, tasa, factorBcv) })
+  rightItems.push({ label: 'IGTF 3%:', value: fmtTotalFac(0, monedaPDF, tasa, factorBcv) })
 
   if (refPago) {
     rightItems.push({ label: 'Ref:', value: refPago })
@@ -552,8 +602,8 @@ export async function generarFacturaPDF({ despacho, items = [], config = {}, for
       doc.setFontSize(7)
       doc.setTextColor(...C_DARK)
 
-      const addr1 = 'Av. 76, (Calle S-3) Nro. 70-C-766, Local Galpón Nro. 3 Edificio Centro Industrial Massico II'
-      const addr2 = 'Parcela MB-6 y Mb7, Urb. Industrial Aeropuerto Vía Flor Amarillo, Valencia, Edo. Carabobo, Zona Postal 2003'
+      const addr1 = config.direccion_negocio || 'Dirección Comercial'
+      const addr2 = config.pie_pagina_pdf || (config.rif_negocio ? `RIF: ${config.rif_negocio}` : '')
 
       doc.text(addr1, PAGE_W / 2, footerY + 5, { align: 'center' })
       doc.setFont('helvetica', 'normal')

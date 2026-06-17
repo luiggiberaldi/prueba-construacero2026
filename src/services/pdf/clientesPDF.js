@@ -1,5 +1,5 @@
 // src/services/pdf/clientesPDF.js
-// Genera PDF profesional del Listado Detallado de Clientes — Construacero Carabobo
+// Genera PDF profesional del Listado Detallado de Clientes — Listo POS
 import { jsPDF } from 'jspdf'
 import { cargarLogo } from './pdfLogo'
 import { WATERMARK_LOGO } from './watermarkBase64'
@@ -23,12 +23,12 @@ function checkPage(doc, y, needed = 30) {
   return y
 }
 
-function drawHeader(doc, logoData, config) {
+function drawHeader(doc, logoData, config, title = 'Base de Datos de Clientes') {
   return drawPremiumHeader({
     doc,
     logoData,
     config,
-    title: 'Base de Datos de Clientes',
+    title,
     subtitle: `Generado: ${new Date().toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })}`
   })
 }
@@ -43,19 +43,19 @@ function drawFooter(doc, config) {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(6)
     doc.setTextColor(...C_GRAY)
-    let footName = config.nombre_negocio || 'Construacero Carabobo C.A.'
-    if (footName.trim().toUpperCase() === 'PRUEBA' || footName.trim() === '') footName = 'Construacero Carabobo C.A.'
+    let footName = config.nombre_negocio || 'Listo POS C.A.'
+    if (footName.trim().toUpperCase() === 'PRUEBA' || footName.trim() === '') footName = 'Listo POS C.A.'
     doc.text(footName, MARGIN, PAGE_H - 10)
     doc.text(`Generado: ${new Date().toLocaleString('es-VE')}`, MARGIN, PAGE_H - 6)
     doc.text(`Página ${p} de ${totalPages}`, PAGE_W - MARGIN, PAGE_H - 10, { align: 'right' })
   }
 }
 
-export async function generarClientesPDF({ items = [], config = {}, action = 'download' }) {
+export async function generarClientesPDF({ items = [], config = {}, action = 'download', title = 'Base de Datos de Clientes' }) {
   const doc = new jsPDF({ unit: 'mm', format: 'letter', orientation: 'portrait' })
   const logoData = await cargarLogo(config.logo_url)
 
-  let y = drawHeader(doc, logoData, config)
+  let y = drawHeader(doc, logoData, config, title)
 
   // Watermark
   try {
@@ -80,9 +80,11 @@ export async function generarClientesPDF({ items = [], config = {}, action = 'do
 
   const kpiBoxW = CONTENT_W / 3
   const kpiBoxH = 15
+  const isPersonalReport = title === 'Reporte de Personal'
+
   const kpis = [
-    { label: 'Total Clientes', value: String(totalClientes), color: C_PRIMARY },
-    { label: 'Clientes Activos', value: String(activos), color: C_EMERALD },
+    { label: isPersonalReport ? 'Total Personal' : 'Total Clientes', value: String(totalClientes), color: C_PRIMARY },
+    { label: isPersonalReport ? 'Personal Activo' : 'Clientes Activos', value: String(activos), color: C_EMERALD },
     { label: 'Nuevos Este Mes', value: String(nuevosEsteMes), color: C_AMBER },
   ]
 
@@ -102,7 +104,15 @@ export async function generarClientesPDF({ items = [], config = {}, action = 'do
   y += kpiBoxH + 8
 
   // Tabla
-  const cols = [
+  const cols = isPersonalReport ? [
+    { label: 'CÓDIGO', x: MARGIN, w: 12 },
+    { label: 'CÉDULA / RIF', x: MARGIN + 12, w: 20 },
+    { label: 'NOMBRE Y APELLIDO', x: MARGIN + 32, w: 50 },
+    { label: 'ROL / CARGO', x: MARGIN + 82, w: 26 },
+    { label: 'TELÉFONO', x: MARGIN + 108, w: 22 },
+    { label: 'VENDEDOR ASIG.', x: MARGIN + 130, w: 28 },
+    { label: 'REGISTRO', x: MARGIN + 158, w: 30 },
+  ] : [
     { label: 'CÓDIGO', x: MARGIN, w: 14 },
     { label: 'RIF / CÉDULA', x: MARGIN + 14, w: 22 },
     { label: 'NOMBRE / RAZÓN SOCIAL', x: MARGIN + 36, w: 58 },
@@ -153,9 +163,11 @@ export async function generarClientesPDF({ items = [], config = {}, action = 'do
     doc.text((item.nombre || '—').toUpperCase().substring(0, 40), cols[2].x + 1, y + 3)
     doc.setFont('helvetica', 'normal')
 
-    // Tipo
-    const tipo = item.tipo_cliente === 'juridico' ? 'JURÍDICO' : 'NATURAL'
-    doc.text(tipo, cols[3].x + 1, y + 3)
+    // Tipo / Rol
+    const tipo = isPersonalReport 
+      ? (item.categoria || '—').toUpperCase()
+      : (item.tipo_cliente === 'juridico' ? 'JURÍDICO' : 'NATURAL')
+    doc.text(String(tipo).substring(0, 12), cols[3].x + 1, y + 3)
 
     // Teléfono
     doc.text(fmtTelefono(item.telefono), cols[4].x + 1, y + 3)

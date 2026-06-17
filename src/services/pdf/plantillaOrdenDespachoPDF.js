@@ -36,11 +36,14 @@ export async function generarPlantillaOrdenDespachoPDF({ config = {}, incluirTra
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(20)
   doc.setTextColor(...C_DARK)
-  doc.text('CONSTRUACERO CARABOBO, C.A.', centerX, 16, { align: 'center' })
+  let n = config.nombre_negocio || 'Listo POS C.A.'
+  if (!n || n.trim().toUpperCase() === 'PRUEBA' || n.trim() === '') n = 'Listo POS C.A.'
+  doc.text(n.toUpperCase(), centerX, 16, { align: 'center' })
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(12)
-  doc.text('RIF.: J-50115913-0', centerX, 22, { align: 'center' })
+  let r = config.rif_negocio ? `RIF: ${config.rif_negocio}` : 'RIF.: J-50115913-0'
+  doc.text(r, centerX, 22, { align: 'center' })
 
   doc.setLineWidth(0.8)
   doc.setDrawColor(...C_DARK)

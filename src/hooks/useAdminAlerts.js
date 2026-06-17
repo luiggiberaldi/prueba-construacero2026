@@ -37,7 +37,7 @@ function stopTitleFlashing() {
     clearInterval(_flashInterval)
     _flashInterval = null
   }
-  document.title = "Listo POS — Construacero Carabobo"
+  document.title = "Listo POS"
 }
 
 export function useAdminAlerts() {
@@ -114,11 +114,11 @@ export function useAdminAlerts() {
       }
     }
 
-    window.addEventListener('construacero-notification', handleNewNotification)
-    window.addEventListener('construacero-notification-read', refresh)
+    window.addEventListener('listopos-notification', handleNewNotification)
+    window.addEventListener('listopos-notification-read', refresh)
     return () => {
-      window.removeEventListener('construacero-notification', handleNewNotification)
-      window.removeEventListener('construacero-notification-read', refresh)
+      window.removeEventListener('listopos-notification', handleNewNotification)
+      window.removeEventListener('listopos-notification-read', refresh)
     }
   }, [handleNewNotification, refresh])
 

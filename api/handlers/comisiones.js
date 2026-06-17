@@ -14,12 +14,17 @@ async function obtenerVendedoresConRol(env, headers, cuentaId, roles) {
   return rows.map(r => r.id).join(',');
 }
 
+function safeParam(val) {
+  if (!val || val === 'null' || val === 'undefined' || val.trim() === '') return null;
+  return val.trim();
+}
+
 // Helper interno para unificar la lógica de filtros entre Lista y Resumen
 function aplicarFiltrosComisiones(query, urlParams, user) {
-  const vendedorId = urlParams.get('vendedorId')
-  const estado = urlParams.get('estado')
-  const desde = urlParams.get('desde')
-  const hasta = urlParams.get('hasta')
+  const vendedorId = safeParam(urlParams.get('vendedorId'))
+  const estado = safeParam(urlParams.get('estado'))
+  const desde = safeParam(urlParams.get('desde'))
+  const hasta = safeParam(urlParams.get('hasta'))
 
   const operatorRol = user.operator_rol
   const operatorId = user.operator_id
@@ -43,8 +48,9 @@ function aplicarFiltrosComisiones(query, urlParams, user) {
   }
 
   // 4. Filtro por Fechas (Día Completo - Zona Horaria Venezuela UTC-4)
-  if (desde) query += `&creadoen=gte.${desde}T00:00:00-04:00`
-  if (hasta) query += `&creadoen=lte.${hasta}T23:59:59-04:00`
+  // Se filtra por la fecha del DESPACHO (notas_despacho.creado_en), igual que el PDF
+  if (desde) query += `&despacho.creado_en=gte.${desde}T00:00:00-04:00`
+  if (hasta) query += `&despacho.creado_en=lte.${hasta}T23:59:59-04:00`
 
   return query
 }
@@ -79,49 +85,76 @@ export async function handleMarcarComisionPagada(request, env) {
   const comisionid = body.comisionid || body.comisionId;
   if (!comisionid || !isValidUuid(comisionid)) return jsonError('comisionid invalido', 400, request);
 
-  let monto = Number(body.montopagado);
-  if (body.montopagado == null) {
-    const actualRes = await fetch(`${env.SUPABASE_URL}/rest/v1/comisiones?id=eq.${comisionid}&select=totalcomision`, { headers });
+  try {
+    // 1. Obtener la comisión actual para validar montos
+    const actualRes = await fetch(`${env.SUPABASE_URL}/rest/v1/comisiones?id=eq.${comisionid}&select=totalcomision,comision_liberada,comision_retenida,montopagado`, { headers });
     if (!actualRes.ok) {
       const err = await actualRes.text();
       return jsonError(`Error al leer comision: ${err}`, actualRes.status, request);
     }
     const [actual] = await actualRes.json();
-    monto = Number(actual?.totalcomision);
-  }
+    if (!actual) return jsonError('Comision no encontrada', 404, request);
 
-  if (!Number.isFinite(monto) || monto < 0) {
-    return jsonError('montopagado invalido', 400, request);
-  }
+    const comisionLiberada = Number(actual.comision_liberada || 0);
+    const totalComision = Number(actual.totalcomision || 0);
+    const comisionRetenida = Number(actual.comision_retenida || 0);
+    const montopagadoPrev = Number(actual.montopagado || 0);
 
-  try {
+    let monto = Number(body.montopagado);
+    if (body.montopagado == null) {
+      // Si no se especifica monto, pagamos todo lo liberado hasta la fecha
+      monto = comisionLiberada;
+    }
+
+    if (!Number.isFinite(monto) || monto < 0) {
+      return jsonError('montopagado invalido', 400, request);
+    }
+
+    // Validar que el pago no supere lo liberado
+    if (monto > comisionLiberada + 0.01) {
+      return jsonError(`No se puede registrar un pago de ${monto} USD porque supera el monto liberado (${comisionLiberada} USD)`, 400, request);
+    }
+
+    if (monto < montopagadoPrev - 0.01) {
+      return jsonError(`El nuevo monto pagado (${monto} USD) no puede ser inferior al monto ya pagado anteriormente (${montopagadoPrev} USD)`, 400, request);
+    }
+
+    // Determinar el nuevo estado
+    let nuevoEstado = 'pendiente';
+    if (comisionRetenida > 0.01) {
+      nuevoEstado = 'cta_cobrar';
+    } else if (monto >= comisionLiberada - 0.01) {
+      nuevoEstado = 'pagada';
+    }
+
     const res = await fetch(`${env.SUPABASE_URL}/rest/v1/comisiones?id=eq.${comisionid}&estado=in.(pendiente,cta_cobrar)&select=id,estado,montopagado`, {
       method: 'PATCH',
       headers: { ...headers, Prefer: 'return=representation' },
       body: JSON.stringify({
-        estado: 'pagada',
+        estado: nuevoEstado,
         montopagado: monto,
-        pagadaen: new Date().toISOString(),
-        pagadapor: operador.id
+        pagadaen: nuevoEstado === 'pagada' ? new Date().toISOString() : null,
+        pagadapor: nuevoEstado === 'pagada' ? operador.id : null,
+        actualizadoen: new Date().toISOString()
       })
     });
 
     if (!res.ok) {
       const err = await res.text();
-      return jsonError(`Error al marcar comision pagada: ${err}`, res.status, request);
+      return jsonError(`Error al registrar pago de comision: ${err}`, res.status, request);
     }
 
     const [comision] = await res.json();
-    if (!comision) return jsonError('Comision no encontrada o ya pagada', 404, request);
+    if (!comision) return jsonError('Comision no encontrada o ya pagada en su totalidad', 404, request);
 
     await registrarAuditoria(env, headers, {
       usuarioId: operador.id, usuarioNombre: operador.nombre, usuarioRol: operador.rol,
       categoria: 'COTIZACION', accion: 'PAGAR_COMISION',
       entidadTipo: 'comision', entidadId: comisionid,
-      meta: { montopagado: monto, estado_nuevo: 'pagada' }, ip,
+      meta: { montopagado: monto, estado_nuevo: nuevoEstado }, ip,
     });
 
-    return json({ ok: true, comisionid, montopagado: monto }, 200, request);
+    return json({ ok: true, comisionid, montopagado: monto, estado: nuevoEstado }, 200, request);
   } catch (e) {
     return jsonError(`Error critico de pago: ${e.message}`, 500, request);
   }
@@ -204,7 +237,101 @@ export async function handleGetComisiones(request, env) {
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
 
-  let baseUrl = `${env.SUPABASE_URL}/rest/v1/comisiones?select=id,despachoid,vendedorid,cotizacionid,cuentaid,totalcomision,comisioncabilla,comisionotros,pctcabilla,pctotros,montopagado,estado,pagadaen,pagadapor,creadoen,actualizadoen&order=creadoen.desc`
+  const vista = url.searchParams.get('vista');
+  const vendedorId = safeParam(url.searchParams.get('vendedorId'));
+  const estado = safeParam(url.searchParams.get('estado'));
+  const desde = safeParam(url.searchParams.get('desde'));
+  const hasta = safeParam(url.searchParams.get('hasta'));
+
+  const esSupervisor = ['supervisor', 'administracion', 'desarrollador', 'jefe'].includes(operador.rol);
+  const operatorId = operador.id;
+
+  if (vista === 'eventos') {
+    let baseUrl = `${env.SUPABASE_URL}/rest/v1/comision_liberaciones?select=id,comision_id,despacho_id,vendedor_id,cuenta_id,monto,tipo,cxc_id,creado_en,comisiones:comisiones!inner(id,totalcomision,comisioncabilla,comisionotros,pctcabilla,pctotros,estado,montopagado,cotizacionid,despacho:notas_despacho(id,numero,total_usd,tasa_snapshot,cliente:clientes!notas_despacho_cliente_id_fkey(id,nombre,tipo_cliente),productos:notas_despacho_items(nombre_snap,codigo_snap,cantidad,precio_unit_usd,descuento_pct,total_linea_usd,origen,producto_id,producto:productos(categoria)))),vendedor:usuarios(id,nombre,color,markup_pct,rol,es_externo)&order=creado_en.desc`
+    
+    let query = baseUrl + `&cuenta_id=eq.${user.id}`
+
+    const filtroVendedor = esSupervisor ? (vendedorId || null) : operatorId;
+    if (filtroVendedor) {
+      if (filtroVendedor === '00000000-0000-0000-0000-000000000000') {
+        query += `&vendedor_id=is.null`
+      } else {
+        query += `&vendedor_id=eq.${filtroVendedor}`
+      }
+    }
+
+    if (desde) query += `&creado_en=gte.${desde}T00:00:00-04:00`
+    if (hasta) query += `&creado_en=lte.${hasta}T23:59:59-04:00`
+
+    const res = await fetch(query, {
+      headers: {
+        apikey: env.SUPABASE_SERVICE_KEY,
+        Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        'Range': `${from}-${to}`,
+        'Prefer': 'count=exact'
+      },
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      return jsonError(`Error al obtener eventos de comision: ${err}`, 500, request);
+    }
+
+    const rows = await res.json();
+    const cotizacionIds = rows.map(r => r.comisiones?.cotizacionid).filter(Boolean);
+    const cotizaciones = await fetchByIds(env, headers, 'cotizaciones', cotizacionIds, 'id,numero,tasa_bcv_snapshot,cliente_id,cliente:clientes(id,nombre)');
+
+    const data = rows.map(r => {
+      const com = r.comisiones || {};
+      const desp = com.despacho || {};
+      const cot = cotizaciones[com.cotizacionid];
+      return {
+        id: r.id,
+        monto: Number(r.monto || 0),
+        tipo: r.tipo,
+        creado_en: r.creado_en,
+        comisiones: {
+          id: com.id,
+          totalcomision: Number(com.totalcomision || 0),
+          comisioncabilla: Number(com.comisioncabilla || 0),
+          comisionotros: Number(com.comisionotros || 0),
+          pctcabilla: Number(com.pctcabilla || 0),
+          pctotros: Number(com.pctotros || 0),
+          estado: com.estado,
+          montopagado: Number(com.montopagado || 0),
+          despacho: desp ? {
+            id: desp.id,
+            numero: desp.numero,
+            totalusd: desp.total_usd,
+            tasa_snapshot: desp.tasa_snapshot,
+            cliente: desp.cliente,
+            productos: desp.productos
+          } : null,
+          cotizacion: cot ? {
+            id: cot.id,
+            numero: cot.numero,
+            tasa_bcv_snapshot: cot.tasa_bcv_snapshot,
+            cliente_nombre: cot.cliente?.nombre || null
+          } : null
+        },
+        vendedor: r.vendedor
+      };
+    });
+
+    const contentRange = res.headers.get('content-range') || '';
+    const total = parseInt(contentRange.split('/')[1] || '0');
+
+    return json({
+      data,
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize)
+    }, 200, request);
+  }
+
+  // Se incluye despacho:notas_despacho!inner(creado_en) para poder filtrar por fecha del despacho
+  let baseUrl = `${env.SUPABASE_URL}/rest/v1/comisiones?select=id,despachoid,vendedorid,cotizacionid,cuentaid,totalcomision,comisioncabilla,comisionotros,pctcabilla,pctotros,montopagado,comision_liberada,comision_retenida,estado,pagadaen,pagadapor,creadoen,actualizadoen,despacho:notas_despacho!inner(creado_en)&order=creadoen.desc`
   
   const userContext = { ...user, operator_rol: operador.rol, operator_id: operador.id };
   let query = aplicarFiltrosComisiones(baseUrl, url.searchParams, userContext)
@@ -224,7 +351,7 @@ export async function handleGetComisiones(request, env) {
   }
 
   const rows = await res.json()
-  const despachos = await fetchByIds(env, headers, 'notas_despacho', rows.map(c => c.despachoid), 'id,numero,total_usd,tasa_snapshot,cliente_id,cliente:clientes!notas_despacho_cliente_id_fkey(id,nombre)')
+  const despachos = await fetchByIds(env, headers, 'notas_despacho', rows.map(c => c.despachoid), 'id,numero,total_usd,tasa_snapshot,cliente_id,cliente:clientes!notas_despacho_cliente_id_fkey(id,nombre),productos:notas_despacho_items(nombre_snap,codigo_snap,cantidad,precio_unit_usd,descuento_pct,total_linea_usd,origen,producto_id,producto:productos(categoria))')
   const cotizaciones = await fetchByIds(env, headers, 'cotizaciones', rows.map(c => c.cotizacionid), 'id,numero,tasa_bcv_snapshot,cliente_id,cliente:clientes(id,nombre)')
   const vendedores = await fetchByIds(env, headers, 'usuarios', rows.map(c => c.vendedorid), 'id,nombre,color,markup_pct,rol,es_externo')
   const data = rows.map(c => {
@@ -242,6 +369,8 @@ export async function handleGetComisiones(request, env) {
       pctcabilla: c.pctcabilla,
       pctotros: c.pctotros,
       montopagado: c.montopagado,
+      comision_liberada: c.comision_liberada,
+      comision_retenida: c.comision_retenida,
       estado: c.estado,
       pagadaen: c.pagadaen,
       pagadapor: c.pagadapor,
@@ -252,7 +381,8 @@ export async function handleGetComisiones(request, env) {
         numero: despacho.numero, 
         totalusd: despacho.total_usd, 
         tasa_snapshot: despacho.tasa_snapshot,
-        cliente_nombre: despacho.cliente?.nombre || null
+        cliente_nombre: despacho.cliente?.nombre || null,
+        productos: despacho.productos
       } : null,
       cotizacion: cotizacion ? {
         id: cotizacion.id,
@@ -288,10 +418,10 @@ export async function handleGetComisionesResumen(request, env) {
       apikey: env.SUPABASE_SERVICE_KEY,
       Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
     };
-    const vendedorId = url.searchParams.get('vendedorId');
-    const estado = url.searchParams.get('estado');
-    const desde = url.searchParams.get('desde');
-    const hasta = url.searchParams.get('hasta');
+    const vendedorId = safeParam(url.searchParams.get('vendedorId'));
+    const estado = safeParam(url.searchParams.get('estado'));
+    const desde = safeParam(url.searchParams.get('desde'));
+    const hasta = safeParam(url.searchParams.get('hasta'));
 
     const esSupervisor = ['supervisor', 'administracion', 'desarrollador', 'jefe'].includes(operador.rol);
     const filtroVendedor = esSupervisor ? (vendedorId || null) : operador.id;
@@ -323,7 +453,8 @@ export async function handleGetComisionesResumen(request, env) {
     const r = rows[0] || {};
 
     // ── CONSULTA SECUNDARIA: desglose de saldo pendiente (Regular vs CxC) ─────
-    let queryBreakdown = `${env.SUPABASE_URL}/rest/v1/comisiones?select=estado,totalcomision,montopagado&estado=in.(pendiente,cta_cobrar)`;
+    // Se incluye despacho:notas_despacho!inner(creado_en) para que el filtro de fecha use la fecha del despacho
+    let queryBreakdown = `${env.SUPABASE_URL}/rest/v1/comisiones?select=estado,totalcomision,montopagado,despacho:notas_despacho!inner(creado_en)&estado=in.(pendiente,cta_cobrar)`;
     const userContext = { ...user, operator_rol: operador.rol, operator_id: operador.id };
     queryBreakdown = aplicarFiltrosComisiones(queryBreakdown, url.searchParams, userContext);
 

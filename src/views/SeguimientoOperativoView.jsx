@@ -11,6 +11,7 @@ import useAuthStore from '../store/useAuthStore'
 import { useSeguimiento, useActualizarSeguimiento, useBorrarSeguimiento } from '../hooks/useSeguimiento'
 import supabase from '../services/supabase/client'
 import { showToast } from '../components/ui/Toast'
+import { removeAccents } from '../utils/format'
 
 // Modales Compartidos
 import FichaClienteModal from '../components/clientes/FichaClienteModal'
@@ -169,8 +170,8 @@ export default function SeguimientoOperativoView() {
   // Realtime refetch invalidation listener (campanita/broadcast de notificaciones)
   useEffect(() => {
     const handleNotification = () => refetch()
-    window.addEventListener('construacero-notification', handleNotification)
-    return () => window.removeEventListener('construacero-notification', handleNotification)
+    window.addEventListener('listopos-notification', handleNotification)
+    return () => window.removeEventListener('listopos-notification', handleNotification)
   }, [refetch])
 
   // ── Estadísticas ──────────────────────────────────────────────────
@@ -189,11 +190,11 @@ export default function SeguimientoOperativoView() {
     return entradas.filter(entry => {
       // Búsqueda por texto
       if (busqueda.trim()) {
-        const text = busqueda.toLowerCase()
-        const matchContenido = entry.contenido?.toLowerCase().includes(text)
-        const matchTitulo = entry.titulo?.toLowerCase().includes(text)
-        const matchUsuario = entry.usuario?.nombre?.toLowerCase().includes(text)
-        const matchCliente = entry.cliente?.nombre?.toLowerCase().includes(text)
+        const text = removeAccents(busqueda.toLowerCase())
+        const matchContenido = removeAccents(entry.contenido || '').toLowerCase().includes(text)
+        const matchTitulo = removeAccents(entry.titulo || '').toLowerCase().includes(text)
+        const matchUsuario = removeAccents(entry.usuario?.nombre || '').toLowerCase().includes(text)
+        const matchCliente = removeAccents(entry.cliente?.nombre || '').toLowerCase().includes(text)
         const matchCotizacion = entry.cotizacion?.numero?.toString().includes(text)
         const matchDespacho = entry.despacho?.numero?.toString().includes(text)
 

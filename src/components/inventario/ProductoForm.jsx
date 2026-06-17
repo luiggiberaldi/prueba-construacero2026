@@ -103,7 +103,7 @@ function PrecioBlock({ label, precioName, pctName, campos, cambiar, esAdmin, err
 
 export default function ProductoForm({ producto = null, isClone = false, onSuccess, onCancel }) {
   const { perfil } = useAuthStore()
-  const esAdmin = perfil?.rol === 'administracion' || perfil?.rol === 'desarrollador'
+  const esAdmin = perfil?.rol === 'administracion' || perfil?.rol === 'desarrollador' || perfil?.rol === 'jefe'
   const esEdicion = !!producto && !isClone
   const [campos, setCampos] = useState(VACIO)
   const [errores, setErrores] = useState({})

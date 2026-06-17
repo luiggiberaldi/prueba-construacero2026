@@ -22,7 +22,11 @@ export default function DateRangeSelector({ value, onChange }) {
     return PRESETS.find(p => mismoRango(value, p.getRango()))?.id || ''
   })
 
-  // Sincronizar el estado si el valor cambia externamente o no coincide
+  // Estado local para los campos del rango personalizado
+  const [localFrom, setLocalFrom] = useState(value?.from || '')
+  const [localTo, setLocalTo] = useState(value?.to || '')
+
+  // Sincronizar el preset activo si el valor cambia externamente
   useEffect(() => {
     const currentPreset = PRESETS.find(p => p.id === activePresetId)
     if (currentPreset && mismoRango(value, currentPreset.getRango())) {
@@ -30,7 +34,16 @@ export default function DateRangeSelector({ value, onChange }) {
     }
     const matching = PRESETS.find(p => mismoRango(value, p.getRango()))
     setActivePresetId(matching ? matching.id : '')
+    if (!matching) {
+      setShowCustom(true)
+    }
   }, [value, activePresetId])
+
+  // Sincronizar inputs locales si el rango cambia externamente
+  useEffect(() => {
+    if (value?.from) setLocalFrom(value.from)
+    if (value?.to) setLocalTo(value.to)
+  }, [value?.from, value?.to])
 
   const customActivo = showCustom || !activePresetId
 
@@ -42,39 +55,38 @@ export default function DateRangeSelector({ value, onChange }) {
     onChange({ from: rango.from, to: rango.to, prevFrom: prev.from, prevTo: prev.to })
   }
 
-  function handleCustom(field, val) {
-    if (!val) return
-    const next = { ...value, [field]: val }
+  function applyCustom() {
+    if (!localFrom || !localTo) return
 
-    // Auto-corrección: si from > to, ajustar el otro campo automáticamente
-    if (next.from && next.to) {
-      const pFrom = next.from.split('-')
-      const pTo = next.to.split('-')
-      const fromD = new Date(pFrom[0], pFrom[1] - 1, pFrom[2])
-      const toD = new Date(pTo[0], pTo[1] - 1, pTo[2])
+    let nextFrom = localFrom
+    let nextTo = localTo
 
-      if (fromD > toD) {
-        // Si el usuario cambió "from" y quedó mayor que "to" → mover "to" = "from"
-        // Si el usuario cambió "to" y quedó menor que "from" → mover "from" = "to"
-        if (field === 'from') {
-          next.to = val
-        } else {
-          next.from = val
-        }
-      }
+    // Auto-corrección: si desde > hasta, ajustamos "hasta" para que sea igual a "desde"
+    const pFrom = nextFrom.split('-')
+    const pTo = nextTo.split('-')
+    const fromD = new Date(pFrom[0], pFrom[1] - 1, pFrom[2])
+    const toD = new Date(pTo[0], pTo[1] - 1, pTo[2])
 
-      // Recalcular con los valores ya corregidos
-      const pFromC = next.from.split('-')
-      const pToC = next.to.split('-')
-      const fromDC = new Date(pFromC[0], pFromC[1] - 1, pFromC[2])
-      const toDC = new Date(pToC[0], pToC[1] - 1, pToC[2])
-      const diff = Math.max(toDC - fromDC, 0)
-      const prevTo = new Date(fromDC.getTime() - 86400000) // día anterior al from
-      const prevFrom = new Date(prevTo.getTime() - diff)
-      next.prevFrom = getLocalISODate(prevFrom)
-      next.prevTo = getLocalISODate(prevTo)
+    if (fromD > toD) {
+      nextTo = nextFrom
+      setLocalTo(nextFrom)
     }
-    onChange(next)
+
+    // Recalcular periodo anterior con los valores corregidos
+    const pFromC = nextFrom.split('-')
+    const pToC = nextTo.split('-')
+    const fromDC = new Date(pFromC[0], pFromC[1] - 1, pFromC[2])
+    const toDC = new Date(pToC[0], pToC[1] - 1, pToC[2])
+    const diff = Math.max(toDC - fromDC, 0)
+    const prevTo = new Date(fromDC.getTime() - 86400000)
+    const prevFrom = new Date(prevTo.getTime() - diff)
+
+    onChange({
+      from: nextFrom,
+      to: nextTo,
+      prevFrom: getLocalISODate(prevFrom),
+      prevTo: getLocalISODate(prevTo)
+    })
   }
 
   return (
@@ -94,7 +106,10 @@ export default function DateRangeSelector({ value, onChange }) {
           </button>
         ))}
         <button
-          onClick={() => setShowCustom(true)}
+          onClick={() => {
+            setShowCustom(true)
+            setActivePresetId('')
+          }}
           className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-full text-[10px] sm:text-xs font-semibold transition-colors border whitespace-nowrap shrink-0 ${
             customActivo
               ? 'bg-primary text-white border-primary'
@@ -105,22 +120,33 @@ export default function DateRangeSelector({ value, onChange }) {
         </button>
       </div>
       {showCustom && (
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3 bg-slate-50 p-3 rounded-2xl border border-slate-100 mt-2 transition-all duration-300">
           <div className="flex flex-col flex-1 min-w-0">
             <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider mb-1 ml-1">Desde</span>
-            <input type="date" value={value.from}
-              max={value.to || undefined}
-              onChange={e => handleCustom('from', e.target.value)}
-              className="text-[11px] sm:text-xs px-2 py-1.5 rounded-lg border border-slate-200 text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary-focus w-full" />
+            <input type="date" value={localFrom}
+              max={localTo || undefined}
+              onChange={e => setLocalFrom(e.target.value)}
+              className="text-[11px] sm:text-xs px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 w-full transition-all" />
           </div>
-          <span className="text-[10px] text-slate-300 shrink-0 mt-4">→</span>
+          <span className="hidden sm:inline text-[10px] text-slate-400 shrink-0 mb-2.5">→</span>
           <div className="flex flex-col flex-1 min-w-0">
             <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider mb-1 ml-1">Hasta</span>
-            <input type="date" value={value.to}
-              min={value.from || undefined}
-              onChange={e => handleCustom('to', e.target.value)}
-              className="text-[11px] sm:text-xs px-2 py-1.5 rounded-lg border border-slate-200 text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary-focus w-full" />
+            <input type="date" value={localTo}
+              min={localFrom || undefined}
+              onChange={e => setLocalTo(e.target.value)}
+              className="text-[11px] sm:text-xs px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 w-full transition-all" />
           </div>
+          <button
+            onClick={applyCustom}
+            disabled={!localFrom || !localTo}
+            className={`h-[38px] w-full sm:w-auto px-5 rounded-xl text-xs font-bold transition-all flex items-center justify-center shadow-sm ${
+              localFrom && localTo
+                ? 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.98]'
+                : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+            }`}
+          >
+            Aceptar
+          </button>
         </div>
       )}
     </div>

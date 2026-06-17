@@ -1,0 +1,2 @@
+# Ignorar la carpeta del API backend ya que se despliega en Cloudflare Workers
+api/

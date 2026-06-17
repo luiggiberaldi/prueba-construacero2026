@@ -165,6 +165,9 @@ export async function processQueue(dispatch) {
       if (item.type === 'CREAR_CLIENTE' && item.payload?.localId && result?.id) {
         idMap[item.payload.localId] = result.id
       }
+      if (item.type === 'CREAR_TRANSPORTISTA' && item.payload?.localId && result?.id) {
+        idMap[item.payload.localId] = result.id
+      }
       if (item.type === 'VENTA_RAPIDA' && result?.id) {
         idMap[item.id] = result.id
         await replaceQueuedDespachoId(item.id, result.id)

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
 import { FORMAS_PAGO } from '../constants/formasPago'
 
 /**
@@ -9,6 +9,44 @@ export function useFormasPago(totalRequerido = 0) {
   // Estado local: formasPago es un array de objetos { metodo, monto }
   // Se mantiene como array para preservar el orden de selección y facilitar el renderizado.
   const [formasPago, setFormasPago] = useState([])
+
+  // Auto-adjust payment amounts when totalRequerido changes
+  useEffect(() => {
+    if (!totalRequerido || totalRequerido <= 0) return
+
+    setFormasPago(prev => {
+      if (prev.length === 1) {
+        const p = prev[0]
+        if (Number(p.monto) !== totalRequerido) {
+          return [{ ...p, monto: Number(totalRequerido.toFixed(2)) }]
+        }
+      } else if (prev.length > 1) {
+        // Find if there is a Cta por cobrar or Cobro a destino to absorb the difference
+        const cxcIndex = prev.findIndex(p => p.metodo === 'Cta por cobrar')
+        if (cxcIndex !== -1) {
+          const sumOthers = prev
+            .filter((_, idx) => idx !== cxcIndex)
+            .reduce((sum, p) => sum + (Number(p.monto) || 0), 0)
+          const newCxcMonto = Math.max(0, Number((totalRequerido - sumOthers).toFixed(2)))
+          if (Number(prev[cxcIndex].monto) !== newCxcMonto) {
+            return prev.map((p, idx) => idx === cxcIndex ? { ...p, monto: newCxcMonto || '' } : p)
+          }
+        } else {
+          const codIndex = prev.findIndex(p => p.metodo === 'Cobro a destino')
+          if (codIndex !== -1) {
+            const sumOthers = prev
+              .filter((_, idx) => idx !== codIndex)
+              .reduce((sum, p) => sum + (Number(p.monto) || 0), 0)
+            const newCodMonto = Math.max(0, Number((totalRequerido - sumOthers).toFixed(2)))
+            if (Number(prev[codIndex].monto) !== newCodMonto) {
+              return prev.map((p, idx) => idx === codIndex ? { ...p, monto: newCodMonto || '' } : p)
+            }
+          }
+        }
+      }
+      return prev
+    })
+  }, [totalRequerido])
 
   /**
    * Alterna la activación de una forma de pago.
@@ -75,9 +113,9 @@ export function useFormasPago(totalRequerido = 0) {
     return formasPago.reduce((s, fp) => s + (Number(fp.monto) || 0), 0)
   }, [formasPago])
 
-  // Lógica de "pago cuadrado": diferencia menor a 0.02 (tolerancia de redondeo)
+  // Lógica de "pago cuadrado" o excedente: totalAsignado debe ser mayor o igual al totalRequerido (dentro de la tolerancia de centavos)
   const pagoCuadrado = useMemo(() => {
-    return formasPago.length > 0 && Math.abs(totalAsignado - totalRequerido) < 0.02
+    return formasPago.length > 0 && (totalAsignado - totalRequerido) >= -0.02
   }, [totalAsignado, totalRequerido, formasPago.length])
 
   const diferencia = useMemo(() => {
